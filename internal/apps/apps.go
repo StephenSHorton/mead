@@ -64,7 +64,11 @@ func New(s *store.Store, b *bottles.Manager, w *wine.Locator, wt *winetricks.Loc
 // then runs that executable in the bottle's prefix context. The path
 // is converted to absolute so wine sees a stable reference even after
 // cwd changes.
-func (m *Manager) Install(ctx context.Context, bottleID, installerPath string) (*runner.Process, error) {
+//
+// extraArgs are passed to the installer after the path. Common uses:
+// NSIS /S, InstallShield /silent, Inno /VERYSILENT — getting through
+// an installer without GUI clicks is huge for agent-driven flows.
+func (m *Manager) Install(ctx context.Context, bottleID, installerPath string, extraArgs ...string) (*runner.Process, error) {
 	if strings.TrimSpace(installerPath) == "" {
 		return nil, ErrInstallerPathRequired
 	}
@@ -72,7 +76,8 @@ func (m *Manager) Install(ctx context.Context, bottleID, installerPath string) (
 	if err != nil {
 		return nil, fmt.Errorf("resolve installer path: %w", err)
 	}
-	spec, err := m.specForBottle(bottleID, []string{abs})
+	args := append([]string{abs}, extraArgs...)
+	spec, err := m.specForBottle(bottleID, args)
 	if err != nil {
 		return nil, err
 	}

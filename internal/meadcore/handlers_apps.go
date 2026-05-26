@@ -17,8 +17,12 @@ type runIDResult struct {
 }
 
 type appsInstallParams struct {
-	BottleID      string `json:"bottle_id"`
-	InstallerPath string `json:"installer_path"`
+	BottleID      string   `json:"bottle_id"`
+	InstallerPath string   `json:"installer_path"`
+	// Args are extra command-line arguments passed to the installer
+	// after its path. Use these for silent-install flags (/S for
+	// NSIS, /VERYSILENT for Inno, /silent for InstallShield).
+	Args []string `json:"args"`
 }
 
 func (c *Core) handleAppsInstall(raw json.RawMessage) (any, error) {
@@ -29,7 +33,7 @@ func (c *Core) handleAppsInstall(raw json.RawMessage) (any, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
-	proc, err := c.Apps.Install(context.Background(), p.BottleID, p.InstallerPath)
+	proc, err := c.Apps.Install(context.Background(), p.BottleID, p.InstallerPath, p.Args...)
 	if err != nil {
 		return nil, err
 	}

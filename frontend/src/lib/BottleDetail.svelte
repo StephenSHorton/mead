@@ -79,7 +79,7 @@
     installing = true
     installError = ''
     try {
-      const runID = await InstallApp(bottle.id, p)
+      const runID = await InstallApp(bottle.id, p, [])
       lastInstallRunID = runID
       installerPath = ''
       // Pull in the newly-started process immediately rather than waiting for the next poll tick.

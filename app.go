@@ -187,12 +187,13 @@ type LogsChunk struct {
 }
 
 // InstallApp spawns a Windows installer inside the named bottle and
-// returns the RunID the frontend uses to poll logs.
-func (a *App) InstallApp(bottleID, installerPath string) (string, error) {
+// returns the RunID the frontend uses to poll logs. extraArgs are
+// passed to the installer (e.g. NSIS /S for silent install).
+func (a *App) InstallApp(bottleID, installerPath string, extraArgs []string) (string, error) {
 	if a.core == nil || a.core.Apps == nil {
 		return "", errBottlesUnavailable
 	}
-	proc, err := a.core.Apps.Install(a.ctx, bottleID, installerPath)
+	proc, err := a.core.Apps.Install(a.ctx, bottleID, installerPath, extraArgs...)
 	if err != nil {
 		return "", err
 	}

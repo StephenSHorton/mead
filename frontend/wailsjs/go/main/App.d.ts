@@ -10,7 +10,7 @@ export function CreateBottle(arg1:string):Promise<main.BottleSummary>;
 
 export function DeleteBottle(arg1:string):Promise<void>;
 
-export function InstallApp(arg1:string,arg2:string):Promise<string>;
+export function InstallApp(arg1:string,arg2:string,arg3:Array<string>):Promise<string>;
 
 export function KillProcess(arg1:string):Promise<void>;
 

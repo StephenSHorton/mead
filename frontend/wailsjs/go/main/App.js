@@ -18,8 +18,8 @@ export function DeleteBottle(arg1) {
   return window['go']['main']['App']['DeleteBottle'](arg1);
 }
 
-export function InstallApp(arg1, arg2) {
-  return window['go']['main']['App']['InstallApp'](arg1, arg2);
+export function InstallApp(arg1, arg2, arg3) {
+  return window['go']['main']['App']['InstallApp'](arg1, arg2, arg3);
 }
 
 export function KillProcess(arg1) {
