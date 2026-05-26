@@ -4,6 +4,10 @@
   <i>Agent-driven Wine for macOS.</i>
 </p>
 
+<p align="center">
+  <img src="docs/hero.png" alt="Mead — a viking-styled mead horn with macOS and Windows desktops layered behind it" width="900">
+</p>
+
 Mead is a macOS app that wraps Apple's Game Porting Toolkit and exposes
 Wine bottle management to Claude Code over MCP. The GUI and the agent
 share the same control surface — every bottle create, app install,
