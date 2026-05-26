@@ -14,19 +14,29 @@ import (
 
 // Process is the supervisor-side handle for a single spawned program.
 // All getters are safe to call concurrently.
+//
+// A Process may be either *live* (we spawned it; cmd is set) or
+// *adopted* (re-registered after a Mead restart from a sidecar file;
+// cmd is nil and we know it only by pid). Adopted processes still
+// support Kill (via direct syscall) and Logs (the file is on disk).
 type Process struct {
-	// Immutable after Spawn returns.
+	// Immutable after Spawn returns (or after Adopt completes).
 	id        RunID
 	bottleID  string
 	argv      []string
 	startedAt time.Time
 	logPath   string
+	metaPath  string // sidecar JSON: written on Spawn, updated on exit, read on Adopt.
 
-	// Live process plumbing.
+	// Live process plumbing. nil for adopted processes.
 	cmd     *exec.Cmd
 	cancel  context.CancelFunc
 	done    chan struct{} // closed when the reaper has recorded exit state.
 	logFile *os.File      // closed by the reaper; do not write to from outside.
+
+	// pid is set at Spawn time AND when adopting an alive process.
+	// Used by Kill for adopted processes (which have no cmd handle).
+	pid int
 
 	// Mutable; guarded by mu.
 	mu       sync.RWMutex
@@ -102,51 +112,120 @@ func (p *Process) RunErr() string {
 func (p *Process) Done() <-chan struct{} { return p.done }
 
 // PID returns the OS process id, or 0 if the process never started.
-// Stable across the process's lifetime.
+// Stable across the process's lifetime. For adopted processes the
+// pid was read from the sidecar; we don't re-validate liveness here.
 func (p *Process) PID() int {
-	if p.cmd.Process == nil {
-		return 0
+	if p.cmd != nil && p.cmd.Process != nil {
+		return p.cmd.Process.Pid
 	}
-	return p.cmd.Process.Pid
+	return p.pid
 }
 
-// Kill sends SIGTERM to the process group, then escalates to SIGKILL
-// after grace if the process hasn't exited. Returns nil if the
-// process is already gone.
+// adopted reports whether this Process was reattached from a sidecar
+// rather than spawned in the current Mead process. Adopted processes
+// have no cmd handle so Kill must use the raw PID and Wait isn't
+// available — we poll for exit instead.
+func (p *Process) adopted() bool { return p.cmd == nil }
+
+// writeSidecar serializes the Process's current state to its sidecar
+// file. Called by the reaper on exit, by Spawn for the initial write,
+// and by the orphan watcher when synthesizing exit info. Safe to call
+// concurrently — writeSidecar (the package func) does an atomic
+// rename.
+func (p *Process) writeSidecar() error {
+	if p.metaPath == "" {
+		return nil
+	}
+	p.mu.RLock()
+	s := &sidecar{
+		ID:        p.id,
+		BottleID:  p.bottleID,
+		Argv:      append([]string(nil), p.argv...),
+		StartedAt: fmtTime(p.startedAt),
+		LogPath:   p.logPath,
+		PID:       p.pid,
+		Exited:    p.exited,
+		ExitedAt:  fmtTime(p.exitedAt),
+		ExitCode:  p.exitCode,
+	}
+	if p.runErr != nil {
+		s.RunErr = p.runErr.Error()
+	}
+	p.mu.RUnlock()
+	return writeSidecar(p.metaPath, s)
+}
+
+// pidAlive reports whether the given OS pid still refers to a live
+// process. Uses signal 0 (no-op signal) which only checks for
+// existence. Returns false for invalid pids.
+func pidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	// kill(pid, 0) returns nil if the process exists and we have
+	// permission to signal it. ESRCH means it's gone. EPERM means
+	// the process exists but we can't signal it (treat as alive —
+	// it's still there).
+	err := syscall.Kill(pid, 0)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, syscall.EPERM) {
+		return true
+	}
+	return false
+}
+
+// Kill sends SIGTERM to the process (or its group for live processes
+// we spawned), then escalates to SIGKILL after grace if it hasn't
+// exited. Returns nil if the process is already gone.
 //
-// The exec.CommandContext cancel is fired in parallel, which signals
-// the Go stdlib's own watchdog as well — belt + suspenders.
+// For LIVE processes (we spawned them with Setpgid): targets the
+// whole process group via Kill(-pgid, ...). Wine's auxiliary
+// processes (wineserver et al) live in the same group, so killing
+// the group cleans up the whole tree.
+//
+// For ADOPTED processes (reattached from sidecar; cmd is nil): we
+// did NOT set up the process group, so Getpgid would return some
+// group structure we don't own — possibly including OUR OWN PID,
+// which would terminate Mead itself. Targets the PID only.
 func (p *Process) Kill() error {
 	if p.Exited() {
 		return nil
 	}
-	p.cancel()
-	pgid, err := syscall.Getpgid(p.PID())
-	if err == nil {
-		// Negative pid = process group target.
-		_ = syscall.Kill(-pgid, syscall.SIGTERM)
-		// Grace period before SIGKILL escalation.
-		select {
-		case <-p.done:
-			return nil
-		case <-time.After(2 * time.Second):
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	pid := p.PID()
+	if pid <= 0 {
+		return fmt.Errorf("no pid to kill")
+	}
+	// For live processes, cancelling the exec.CommandContext signals
+	// Go's own watchdog in parallel — belt + suspenders.
+	if p.cancel != nil {
+		p.cancel()
+	}
+
+	useGroup := !p.adopted()
+	sendSignal := func(sig syscall.Signal) {
+		if useGroup {
+			if pgid, err := syscall.Getpgid(pid); err == nil {
+				_ = syscall.Kill(-pgid, sig)
+				return
+			}
 		}
-	} else if p.cmd.Process != nil {
-		// Best-effort fallback if the process group lookup failed.
-		_ = p.cmd.Process.Signal(syscall.SIGTERM)
-		select {
-		case <-p.done:
-			return nil
-		case <-time.After(2 * time.Second):
-			_ = p.cmd.Process.Kill()
-		}
+		_ = syscall.Kill(pid, sig)
+	}
+
+	sendSignal(syscall.SIGTERM)
+	select {
+	case <-p.done:
+		return nil
+	case <-time.After(2 * time.Second):
+		sendSignal(syscall.SIGKILL)
 	}
 	select {
 	case <-p.done:
 		return nil
 	case <-time.After(2 * time.Second):
-		return fmt.Errorf("process %d did not exit after kill", p.PID())
+		return fmt.Errorf("process %d did not exit after kill", pid)
 	}
 }
 

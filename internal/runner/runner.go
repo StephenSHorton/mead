@@ -174,10 +174,21 @@ func (r *Runner) Spawn(ctx context.Context, spec Spec) (*Process, error) {
 		argv:      append([]string(nil), spec.Argv...),
 		startedAt: time.Now().UTC(),
 		logPath:   spec.LogPath,
+		metaPath:  sidecarPathFor(spec.LogPath),
 		cmd:       cmd,
 		cancel:    cancel,
 		done:      make(chan struct{}),
 		logFile:   f,
+		pid:       cmd.Process.Pid,
+	}
+
+	// Write the initial sidecar immediately so a discovery scan that
+	// runs the moment after Spawn picks up this process.
+	if err := p.writeSidecar(); err != nil {
+		// Sidecar write failures are non-fatal — the in-memory
+		// registry still tracks the process, just won't survive a
+		// Mead restart. Log loudly so this gets noticed.
+		fmt.Fprintf(os.Stderr, "runner.Spawn: write sidecar failed: %v\n", err)
 	}
 
 	r.mu.Lock()
@@ -185,7 +196,7 @@ func (r *Runner) Spawn(ctx context.Context, spec Spec) (*Process, error) {
 	r.mu.Unlock()
 
 	// Reaper goroutine: wait for the process to exit, record state,
-	// close the log file, signal done.
+	// update the sidecar, close the log file, signal done.
 	go func() {
 		err := cmd.Wait()
 		p.mu.Lock()
@@ -200,10 +211,102 @@ func (r *Runner) Spawn(ctx context.Context, spec Spec) (*Process, error) {
 		}
 		p.mu.Unlock()
 		_ = f.Close()
+		_ = p.writeSidecar() // final state — best effort.
 		close(p.done)
 	}()
 
 	return p, nil
+}
+
+// Adopt re-registers a process from its on-disk sidecar JSON. Called
+// during discovery at Mead startup (see meadcore.New). The sidecar
+// at metaPath is loaded; the process is registered in the runner's
+// in-memory map. If the sidecar reports exited=false and the pid is
+// still alive in the OS, a watcher goroutine polls until the pid
+// dies and then updates the sidecar with synthesized exit info
+// (exit_code=-1, run_err describing the orphan recovery). If the
+// pid is already dead at adoption time, the sidecar is updated
+// immediately.
+//
+// Returns the adopted Process so the caller can introspect or chain.
+// Idempotent on the runID: re-adopting the same sidecar replaces the
+// in-memory entry but does NOT touch the disk file.
+func (r *Runner) Adopt(metaPath string) (*Process, error) {
+	s, err := readSidecar(metaPath)
+	if err != nil {
+		return nil, fmt.Errorf("read sidecar: %w", err)
+	}
+	p := &Process{
+		id:        s.ID,
+		bottleID:  s.BottleID,
+		argv:      append([]string(nil), s.Argv...),
+		startedAt: parseTime(s.StartedAt),
+		logPath:   s.LogPath,
+		metaPath:  metaPath,
+		pid:       s.PID,
+		done:      make(chan struct{}),
+		exited:    s.Exited,
+		exitedAt:  parseTime(s.ExitedAt),
+		exitCode:  s.ExitCode,
+	}
+	if s.RunErr != "" {
+		p.runErr = errors.New(s.RunErr)
+	}
+
+	r.mu.Lock()
+	r.processes[p.id] = p
+	r.mu.Unlock()
+
+	if p.exited {
+		close(p.done) // already exited — done channel ready immediately
+		return p, nil
+	}
+
+	// Sidecar says not exited. Check if the pid is actually alive.
+	if !pidAlive(p.pid) {
+		// Process died while Mead was offline. Synthesize the exit.
+		p.mu.Lock()
+		p.exited = true
+		p.exitedAt = time.Now().UTC()
+		p.exitCode = -1
+		p.runErr = errors.New("process exited while Mead was not running (synthesized)")
+		p.mu.Unlock()
+		_ = p.writeSidecar()
+		close(p.done)
+		return p, nil
+	}
+
+	// Alive — spawn a watcher goroutine. We can't cmd.Wait() on a
+	// process we didn't spawn, so we poll. 1s cadence is plenty
+	// granular — these are wineboot/winetricks/install-style
+	// long-runners, sub-second exit precision doesn't matter.
+	go r.watchOrphan(p)
+	return p, nil
+}
+
+// watchOrphan polls an adopted process's pid until it exits, then
+// records synthesized exit info and signals done.
+func (r *Runner) watchOrphan(p *Process) {
+	const interval = time.Second
+	for {
+		time.Sleep(interval)
+		if pidAlive(p.pid) {
+			continue
+		}
+		p.mu.Lock()
+		if p.exited {
+			p.mu.Unlock()
+			return // Kill() may have already set this — race-safe
+		}
+		p.exited = true
+		p.exitedAt = time.Now().UTC()
+		p.exitCode = -1
+		p.runErr = errors.New("process exited (adopted; exit code unavailable)")
+		p.mu.Unlock()
+		_ = p.writeSidecar()
+		close(p.done)
+		return
+	}
 }
 
 // Get returns the process for a given RunID, or nil + false if it

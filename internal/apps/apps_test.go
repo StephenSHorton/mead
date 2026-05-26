@@ -83,14 +83,24 @@ func TestInstall_SpawnsWineWithInstaller(t *testing.T) {
 		t.Errorf("ExitCode = %d; want 0", proc.ExitCode())
 	}
 
-	// Log file should be under <store>/bottles/<id>/logs/
+	// Log file should be under <store>/bottles/<id>/logs/ alongside
+	// its sidecar JSON.
 	logsDir := filepath.Join(s.Root(), "bottles", bottleID, "logs")
 	files, err := os.ReadDir(logsDir)
 	if err != nil {
 		t.Fatalf("read logs dir: %v", err)
 	}
-	if len(files) != 1 {
-		t.Errorf("expected 1 log file under %s, got %d", logsDir, len(files))
+	var logs, sidecars int
+	for _, f := range files {
+		switch {
+		case strings.HasSuffix(f.Name(), ".log"):
+			logs++
+		case strings.HasSuffix(f.Name(), ".json"):
+			sidecars++
+		}
+	}
+	if logs != 1 || sidecars != 1 {
+		t.Errorf("expected 1 .log + 1 .json under %s, got %d logs + %d sidecars", logsDir, logs, sidecars)
 	}
 
 	// Argv should have been wine <abs installer>, and WINEPREFIX

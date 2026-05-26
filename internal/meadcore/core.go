@@ -54,6 +54,18 @@ func New() (*Core, error) {
 	wt := winetricks.New()
 	r := runner.New()
 	bm := bottles.New(s, w, r)
+	// Discover and re-register processes from previous Mead sessions.
+	// Each spawned process writes a <logPath>.json sidecar; here we
+	// scan every bottle's logs/ dir and Adopt them so:
+	//  - past-session log files are accessible via process.logs
+	//  - still-running orphans (e.g. a long-running winetricks
+	//    install that outlived a Mead restart) get a watcher
+	//    re-attached and remain killable via process.kill
+	// Discovery failures are logged but never fatal; the rest of
+	// Mead works regardless.
+	if err := adoptExistingProcesses(s, r); err != nil {
+		log.Printf("meadcore: process discovery: %v (continuing)", err)
+	}
 	return &Core{
 		Store:      s,
 		Wine:       w,
