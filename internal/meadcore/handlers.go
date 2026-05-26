@@ -31,6 +31,17 @@ func RegisterAll(b *bridge.Bridge, c *Core) {
 	reg("bottles.create", c.handleBottlesCreate)
 	reg("bottles.get", c.handleBottlesGet)
 	reg("bottles.delete", c.handleBottlesDelete)
+
+	// --- Apps -------------------------------------------------------------
+	reg("apps.install", c.handleAppsInstall)
+	reg("apps.launch", c.handleAppsLaunch)
+	reg("apps.list", c.handleAppsList)
+
+	// --- Processes (the diagnostic surface) ------------------------------
+	reg("process.list", c.handleProcessList)
+	reg("process.get", c.handleProcessGet)
+	reg("process.kill", c.handleProcessKill)
+	reg("process.logs", c.handleProcessLogs)
 }
 
 // pingResult is the response shape for bridge.ping — kept stable across

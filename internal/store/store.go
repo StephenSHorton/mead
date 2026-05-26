@@ -99,6 +99,21 @@ func (s *Store) PrefixDir(id string) (string, error) {
 	return filepath.Join(dir, "prefix"), nil
 }
 
+// LogsDir returns (and mkdir-ps) the per-bottle log directory. Spawn
+// callers compose a filename of their choosing (typically <runID>.log)
+// under this path. Validates the id.
+func (s *Store) LogsDir(id string) (string, error) {
+	dir, err := s.BottleDir(id)
+	if err != nil {
+		return "", err
+	}
+	logs := filepath.Join(dir, "logs")
+	if err := os.MkdirAll(logs, 0o755); err != nil {
+		return "", fmt.Errorf("create logs dir: %w", err)
+	}
+	return logs, nil
+}
+
 // SaveBottle atomically writes a bottle's metadata. Creates the
 // bottle's directory if it doesn't exist. Validates b.ID before
 // touching disk.

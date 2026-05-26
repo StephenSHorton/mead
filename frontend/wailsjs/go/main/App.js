@@ -9,3 +9,15 @@ export function BridgePort() {
 export function BridgeTokenShort() {
   return window['go']['main']['App']['BridgeTokenShort']();
 }
+
+export function CreateBottle(arg1) {
+  return window['go']['main']['App']['CreateBottle'](arg1);
+}
+
+export function DeleteBottle(arg1) {
+  return window['go']['main']['App']['DeleteBottle'](arg1);
+}
+
+export function ListBottles() {
+  return window['go']['main']['App']['ListBottles']();
+}

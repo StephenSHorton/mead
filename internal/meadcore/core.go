@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/StephenSHorton/mead/internal/apps"
 	"github.com/StephenSHorton/mead/internal/bottles"
 	"github.com/StephenSHorton/mead/internal/runner"
 	"github.com/StephenSHorton/mead/internal/store"
@@ -26,6 +27,7 @@ type Core struct {
 	Wine    *wine.Locator
 	Bottles *bottles.Manager
 	Runner  *runner.Runner
+	Apps    *apps.Manager
 }
 
 // New constructs a fully-wired core. If the store can't be opened
@@ -48,11 +50,13 @@ func New() (*Core, error) {
 	}
 	w := wine.New()
 	r := runner.New()
+	bm := bottles.New(s, w, r)
 	return &Core{
 		Store:   s,
 		Wine:    w,
 		Runner:  r,
-		Bottles: bottles.New(s, w, r),
+		Bottles: bm,
+		Apps:    apps.New(s, bm, w, r),
 	}, nil
 }
 
@@ -62,6 +66,14 @@ func New() (*Core, error) {
 func (c *Core) requireBottles() error {
 	if c.Bottles == nil {
 		return fmt.Errorf("bottles unavailable: store failed to open at startup (see app log)")
+	}
+	return nil
+}
+
+// requireApps mirrors requireBottles for the apps subsystem.
+func (c *Core) requireApps() error {
+	if c.Apps == nil {
+		return fmt.Errorf("apps unavailable: store failed to open at startup (see app log)")
 	}
 	return nil
 }

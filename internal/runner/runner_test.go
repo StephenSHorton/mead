@@ -2,7 +2,8 @@ package runner
 
 import (
 	"context"
-	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -55,14 +56,25 @@ func TestRun_EmptyArgvRejected(t *testing.T) {
 	}
 }
 
-func TestRun_DetachUnsupported(t *testing.T) {
+func TestRun_LogPathTeesOutput(t *testing.T) {
 	r := New()
-	_, err := r.Run(context.Background(), Spec{
-		Argv:   []string{"/bin/sh", "-c", "true"},
-		Detach: true,
+	logPath := filepath.Join(t.TempDir(), "out.log")
+	res, err := r.Run(context.Background(), Spec{
+		Argv:    []string{"/bin/sh", "-c", "echo hello-to-file"},
+		LogPath: logPath,
 	})
-	if !errors.Is(err, ErrDetachUnsupported) {
-		t.Errorf("expected ErrDetachUnsupported, got %v", err)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(string(res.Output), "hello-to-file") {
+		t.Errorf("in-memory output missing content: %q", res.Output)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(data), "hello-to-file") {
+		t.Errorf("on-disk log missing content: %q", data)
 	}
 }
 
