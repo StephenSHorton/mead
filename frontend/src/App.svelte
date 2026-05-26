@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import {
     BridgePort,
     BridgeTokenShort,
@@ -7,6 +7,7 @@
     CreateBottle,
     DeleteBottle,
   } from '../wailsjs/go/main/App.js'
+  import { EventsOn } from '../wailsjs/runtime/runtime'
   import type { main } from '../wailsjs/go/models'
   import BottleDetail from './lib/BottleDetail.svelte'
 
@@ -41,10 +42,20 @@
     }
   }
 
+  let unsubscribeBottles: (() => void) | null = null
+
   onMount(async () => {
     port = await BridgePort()
     tokenShort = await BridgeTokenShort()
+    // Refresh when ANY bottle mutation happens (GUI or MCP). Without
+    // this, external creates/deletes don't show up until the user
+    // does something that triggers a refetch.
+    unsubscribeBottles = EventsOn('mead:bottles-changed', () => { refresh() })
     await refresh()
+  })
+
+  onDestroy(() => {
+    if (unsubscribeBottles) unsubscribeBottles()
   })
 
   async function refresh() {

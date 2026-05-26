@@ -5,9 +5,11 @@ import (
 	"errors"
 	"log"
 
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+
 	"github.com/StephenSHorton/mead/internal/bridge"
 	"github.com/StephenSHorton/mead/internal/meadcore"
-	"github.com/StephenSHorton/mead/internal/runner"
+	wrunner "github.com/StephenSHorton/mead/internal/runner"
 )
 
 // errBottlesUnavailable is returned to the frontend when the bottle
@@ -22,7 +24,19 @@ var errProcessNotFound = errors.New("process not found")
 
 // runnerID is a typed alias so we don't sprinkle string casts through
 // the bindings. Wails surfaces the underlying string in JS untouched.
-func runnerID(s string) runner.RunID { return runner.RunID(s) }
+func runnerID(s string) wrunner.RunID { return wrunner.RunID(s) }
+
+// Event names emitted to the Svelte side. Constants live here so the
+// frontend can import the matching strings and the wire contract has
+// one authoritative source.
+//
+// EventBottlesChanged fires after any successful bottle mutation
+// regardless of origin (GUI button click OR external MCP call) so the
+// list view can re-fetch. Without this, MCP-initiated changes don't
+// show up until the user does something that triggers a refresh.
+const (
+	EventBottlesChanged = "mead:bottles-changed"
+)
 
 // App is the Wails-bound surface. Methods on App that don't start with a
 // lowercase letter become JS-callable from the frontend via
@@ -59,6 +73,15 @@ func NewApp() *App {
 // GUI is still useful without agent access.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	// Wire the bottles manager's onChange callback to a Wails event
+	// emission so external (MCP) mutations propagate to the GUI.
+	// Pre-Wails-startup the callback is a no-op; we can only emit
+	// once we have a context.
+	if a.core != nil && a.core.Bottles != nil {
+		a.core.Bottles.SetOnChange(func() {
+			runtime.EventsEmit(a.ctx, EventBottlesChanged)
+		})
+	}
 	if err := a.bridge.Start(); err != nil {
 		log.Printf("MCP bridge failed to start: %v (continuing without agent access)", err)
 		return

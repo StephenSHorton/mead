@@ -41,6 +41,15 @@ type Manager struct {
 	wine    *wine.Locator
 	runner  *runner.Runner
 	mu      sync.Mutex // serializes Create + Delete against each other
+
+	// onChange, when set, is invoked after any successful mutation
+	// (Create, Delete, SetEnv). The host application wires this to a
+	// Wails event emission so the GUI re-fetches its bottle list
+	// regardless of whether the mutation came from the GUI itself or
+	// from an external MCP client. Fired AFTER the manager's lock is
+	// released so listeners can re-enter Manager methods without
+	// deadlocking.
+	onChange func()
 }
 
 // New returns a Manager wired to the given dependencies. All three
@@ -48,6 +57,25 @@ type Manager struct {
 // constructor is responsible for filling them).
 func New(s *store.Store, w *wine.Locator, r *runner.Runner) *Manager {
 	return &Manager{store: s, wine: w, runner: r}
+}
+
+// SetOnChange installs a callback that fires after any successful
+// bottle mutation. Idempotent — pass nil to clear. Thread-safe.
+func (m *Manager) SetOnChange(cb func()) {
+	m.mu.Lock()
+	m.onChange = cb
+	m.mu.Unlock()
+}
+
+// emit fires the onChange callback if one is set. Called with mu
+// NOT held so the callback can re-enter Manager methods.
+func (m *Manager) emit() {
+	m.mu.Lock()
+	cb := m.onChange
+	m.mu.Unlock()
+	if cb != nil {
+		cb()
+	}
 }
 
 // Create makes a new prefix and registers a Bottle for it. Steps:
@@ -74,18 +102,23 @@ func (m *Manager) Create(ctx context.Context, name string) (*Bottle, error) {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	// We unlock manually before emit() so a listener can re-enter
+	// Manager methods. Each return path either unlocks-and-returns
+	// or, on success, falls through to the bottom where we unlock,
+	// emit, then return.
 	taken, err := m.store.NameTaken(name)
 	if err != nil {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("check name uniqueness: %w", err)
 	}
 	if taken {
+		m.mu.Unlock()
 		return nil, ErrBottleNameConflict
 	}
 
 	winePath, err := m.wine.Path()
 	if err != nil {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("locate wine: %w", err)
 	}
 	wineVersion, _ := m.wine.Version() // Best-effort; we don't fail Create just because --version stuttered.
@@ -95,6 +128,7 @@ func (m *Manager) Create(ctx context.Context, name string) (*Bottle, error) {
 	if err != nil {
 		// Shouldn't happen — uuid.NewString returns a valid UUID — but
 		// defending against future changes to the id source.
+		m.mu.Unlock()
 		return nil, fmt.Errorf("resolve prefix dir: %w", err)
 	}
 
@@ -105,6 +139,7 @@ func (m *Manager) Create(ctx context.Context, name string) (*Bottle, error) {
 	// before it gets a chance to materialize anything). Pre-create
 	// the dir so wineboot has somewhere to land.
 	if err := os.MkdirAll(prefixDir, 0o755); err != nil {
+		m.mu.Unlock()
 		return nil, fmt.Errorf("pre-create prefix dir: %w", err)
 	}
 	res, err := m.runner.Run(ctx, runner.Spec{
@@ -115,6 +150,7 @@ func (m *Manager) Create(ctx context.Context, name string) (*Bottle, error) {
 		// Roll back the partial prefix so the user doesn't see a
 		// half-baked bottle in the list.
 		_ = m.store.DeleteBottle(id)
+		m.mu.Unlock()
 		return nil, fmt.Errorf("wineboot --init: %w\noutput:\n%s", err, truncate(res.Output, 4096))
 	}
 
@@ -126,8 +162,11 @@ func (m *Manager) Create(ctx context.Context, name string) (*Bottle, error) {
 	}
 	if err := m.store.SaveBottle(b); err != nil {
 		_ = m.store.DeleteBottle(id)
+		m.mu.Unlock()
 		return nil, fmt.Errorf("save bottle: %w", err)
 	}
+	m.mu.Unlock()
+	m.emit()
 	return b, nil
 }
 
@@ -155,8 +194,12 @@ func (m *Manager) Get(id string) (*Bottle, error) {
 // invoking. Idempotent — deleting an unknown id returns nil.
 func (m *Manager) Delete(id string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.store.DeleteBottle(id)
+	err := m.store.DeleteBottle(id)
+	m.mu.Unlock()
+	if err == nil {
+		m.emit()
+	}
+	return err
 }
 
 // SetEnv sets (or, when value is empty, unsets) one entry in the
@@ -171,10 +214,9 @@ func (m *Manager) SetEnv(id, key, value string) error {
 		return ErrEnvKeyRequired
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	b, err := m.store.LoadBottle(id)
 	if err != nil {
+		m.mu.Unlock()
 		if errors.Is(err, store.ErrBottleNotFound) {
 			return ErrBottleNotFound
 		}
@@ -188,7 +230,12 @@ func (m *Manager) SetEnv(id, key, value string) error {
 	} else {
 		b.EnvOverrides[key] = value
 	}
-	return m.store.SaveBottle(b)
+	err = m.store.SaveBottle(b)
+	m.mu.Unlock()
+	if err == nil {
+		m.emit()
+	}
+	return err
 }
 
 // EnvOverrides returns a copy of the bottle's persisted env-overrides
