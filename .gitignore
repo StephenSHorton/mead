@@ -1,0 +1,52 @@
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Mead runtime state (per-pid MCP lockfiles, etc.)
+/.mead/
+
+# Local notes that shouldn't ship
+/scratch/
+/notes-local/
+
+# Wails build outputs
+/build/bin/
+
+# Runtime log
+mead.log
+
+# Frontend build artifacts (frontend/dist content is rebuilt every time;
+# the directory itself must exist for go:embed to succeed — kept via gitkeep)
+/frontend/node_modules/
+/frontend/dist/*
+!/frontend/dist/.gitkeep
+# Wails-CLI install-cache marker — regenerated on every `wails build`
+/frontend/package.json.md5
+
+# Bundled GPTK / Wine binaries get dropped here by build-wine-macos.sh
+# (lands in a future PR); .gitignored because each dev builds their own
+# from a known-good source. The .h headers stay.
+/scripts/wine/bin/
+/scripts/wine/lib/
