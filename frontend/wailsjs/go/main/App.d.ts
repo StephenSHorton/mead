@@ -10,4 +10,14 @@ export function CreateBottle(arg1:string):Promise<main.BottleSummary>;
 
 export function DeleteBottle(arg1:string):Promise<void>;
 
+export function InstallApp(arg1:string,arg2:string):Promise<string>;
+
+export function KillProcess(arg1:string):Promise<void>;
+
+export function LaunchApp(arg1:string,arg2:string):Promise<string>;
+
 export function ListBottles():Promise<Array<main.BottleSummary>>;
+
+export function ListProcesses(arg1:string):Promise<Array<main.ProcessSummary>>;
+
+export function ProcessLogs(arg1:string,arg2:number,arg3:number):Promise<main.LogsChunk>;

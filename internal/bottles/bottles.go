@@ -152,6 +152,59 @@ func (m *Manager) Delete(id string) error {
 	return m.store.DeleteBottle(id)
 }
 
+// SetEnv sets (or, when value is empty, unsets) one entry in the
+// bottle's env_overrides map. Persisted to metadata.json so the env
+// survives Mead restarts. apps.Install / apps.Launch fold these into
+// the spawned wine process's environment alongside WINEPREFIX.
+//
+// Mutex held for the read-modify-write so concurrent SetEnv calls
+// don't race on the metadata.
+func (m *Manager) SetEnv(id, key, value string) error {
+	if key == "" {
+		return ErrEnvKeyRequired
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	b, err := m.store.LoadBottle(id)
+	if err != nil {
+		if errors.Is(err, store.ErrBottleNotFound) {
+			return ErrBottleNotFound
+		}
+		return err
+	}
+	if b.EnvOverrides == nil && value != "" {
+		b.EnvOverrides = make(map[string]string)
+	}
+	if value == "" {
+		delete(b.EnvOverrides, key)
+	} else {
+		b.EnvOverrides[key] = value
+	}
+	return m.store.SaveBottle(b)
+}
+
+// EnvOverrides returns a copy of the bottle's persisted env-overrides
+// map. Returns nil when none are set. Used by callers that need to
+// compose env (apps.Install/Launch) and by the MCP env.get handler.
+func (m *Manager) EnvOverrides(id string) (map[string]string, error) {
+	b, err := m.store.LoadBottle(id)
+	if err != nil {
+		if errors.Is(err, store.ErrBottleNotFound) {
+			return nil, ErrBottleNotFound
+		}
+		return nil, err
+	}
+	if len(b.EnvOverrides) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(b.EnvOverrides))
+	for k, v := range b.EnvOverrides {
+		out[k] = v
+	}
+	return out, nil
+}
+
 // truncate clips b to at most n bytes for inclusion in user-facing
 // error messages. Long wineboot output is rarely actionable past the
 // first few KiB.

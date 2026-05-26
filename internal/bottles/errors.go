@@ -15,3 +15,7 @@ var ErrBottleNameConflict = errors.New("bottle name already in use")
 // ErrBottleNameRequired is returned by Create when the supplied name
 // is empty or whitespace-only.
 var ErrBottleNameRequired = errors.New("bottle name is required")
+
+// ErrEnvKeyRequired is returned by SetEnv when the supplied env-var
+// name is empty. (Empty values are valid — they delete the key.)
+var ErrEnvKeyRequired = errors.New("env key is required")

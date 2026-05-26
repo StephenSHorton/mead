@@ -18,16 +18,18 @@ import (
 	"github.com/StephenSHorton/mead/internal/runner"
 	"github.com/StephenSHorton/mead/internal/store"
 	"github.com/StephenSHorton/mead/internal/wine"
+	"github.com/StephenSHorton/mead/internal/winetricks"
 )
 
 // Core is the singleton wired up at app startup. Hand it to the bridge
 // (via RegisterAll) and to the Wails App struct so both surfaces share it.
 type Core struct {
-	Store   *store.Store
-	Wine    *wine.Locator
-	Bottles *bottles.Manager
-	Runner  *runner.Runner
-	Apps    *apps.Manager
+	Store      *store.Store
+	Wine       *wine.Locator
+	Winetricks *winetricks.Locator
+	Bottles    *bottles.Manager
+	Runner     *runner.Runner
+	Apps       *apps.Manager
 }
 
 // New constructs a fully-wired core. If the store can't be opened
@@ -49,14 +51,16 @@ func New() (*Core, error) {
 		}, nil
 	}
 	w := wine.New()
+	wt := winetricks.New()
 	r := runner.New()
 	bm := bottles.New(s, w, r)
 	return &Core{
-		Store:   s,
-		Wine:    w,
-		Runner:  r,
-		Bottles: bm,
-		Apps:    apps.New(s, bm, w, r),
+		Store:      s,
+		Wine:       w,
+		Winetricks: wt,
+		Runner:     r,
+		Bottles:    bm,
+		Apps:       apps.New(s, bm, w, wt, r),
 	}, nil
 }
 

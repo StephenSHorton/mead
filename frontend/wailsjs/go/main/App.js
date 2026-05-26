@@ -18,6 +18,26 @@ export function DeleteBottle(arg1) {
   return window['go']['main']['App']['DeleteBottle'](arg1);
 }
 
+export function InstallApp(arg1, arg2) {
+  return window['go']['main']['App']['InstallApp'](arg1, arg2);
+}
+
+export function KillProcess(arg1) {
+  return window['go']['main']['App']['KillProcess'](arg1);
+}
+
+export function LaunchApp(arg1, arg2) {
+  return window['go']['main']['App']['LaunchApp'](arg1, arg2);
+}
+
 export function ListBottles() {
   return window['go']['main']['App']['ListBottles']();
+}
+
+export function ListProcesses(arg1) {
+  return window['go']['main']['App']['ListProcesses'](arg1);
+}
+
+export function ProcessLogs(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ProcessLogs'](arg1, arg2, arg3);
 }

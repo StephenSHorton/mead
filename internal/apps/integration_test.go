@@ -75,7 +75,7 @@ esac
 	w := wine.New()
 	r := runner.New()
 	bm := bottles.New(s, w, r)
-	m := New(s, bm, w, r)
+	m := New(s, bm, w, nil, r)
 	b, err := bm.Create(context.Background(), "wc3-bottle")
 	if err != nil {
 		t.Fatalf("bottles.Create: %v", err)

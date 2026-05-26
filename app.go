@@ -7,12 +7,22 @@ import (
 
 	"github.com/StephenSHorton/mead/internal/bridge"
 	"github.com/StephenSHorton/mead/internal/meadcore"
+	"github.com/StephenSHorton/mead/internal/runner"
 )
 
 // errBottlesUnavailable is returned to the frontend when the bottle
 // manager isn't wired (store failed to open at startup). The frontend
 // maps this to a "Mead couldn't open its data directory" empty state.
 var errBottlesUnavailable = errors.New("bottles unavailable (see app log)")
+
+// errProcessNotFound is the frontend-facing analog of
+// runner.ErrProcessNotFound — Wails errors surface to JS as the
+// .message string, so we want something self-explanatory.
+var errProcessNotFound = errors.New("process not found")
+
+// runnerID is a typed alias so we don't sprinkle string casts through
+// the bindings. Wails surfaces the underlying string in JS untouched.
+func runnerID(s string) runner.RunID { return runner.RunID(s) }
 
 // App is the Wails-bound surface. Methods on App that don't start with a
 // lowercase letter become JS-callable from the frontend via
@@ -142,4 +152,124 @@ func (a *App) DeleteBottle(id string) error {
 		return errBottlesUnavailable
 	}
 	return a.core.Bottles.Delete(id)
+}
+
+// ---- Apps + processes bindings exposed to the frontend ------------------
+//
+// These mirror the MCP surface (apps.install, apps.launch, process.list,
+// etc.) but as method calls on the Wails App struct so the GUI can drive
+// them without speaking JSON-RPC. They return the same payload shapes the
+// bridge does, formatted for the Svelte side.
+
+// ProcessSummary is the JSON-friendly shape the frontend uses to render
+// the process list and the live log viewer. Mirrors the bridge's
+// processSummary; duplicated here because Wails' binding generator
+// scans the main package, not internal/.
+type ProcessSummary struct {
+	RunID     string   `json:"run_id"`
+	BottleID  string   `json:"bottle_id,omitempty"`
+	Argv      []string `json:"argv"`
+	StartedAt string   `json:"started_at"`
+	LogPath   string   `json:"log_path,omitempty"`
+	Exited    bool     `json:"exited"`
+	ExitedAt  string   `json:"exited_at,omitempty"`
+	ExitCode  int      `json:"exit_code,omitempty"`
+	RunErr    string   `json:"run_err,omitempty"`
+}
+
+// LogsChunk is the response shape from ProcessLogs(). The frontend
+// polls: pass offset=NextOffset back on the next call until Exited is
+// true and Bytes is empty.
+type LogsChunk struct {
+	Bytes      string `json:"bytes"`
+	NextOffset int64  `json:"next_offset"`
+	Exited     bool   `json:"exited"`
+}
+
+// InstallApp spawns a Windows installer inside the named bottle and
+// returns the RunID the frontend uses to poll logs.
+func (a *App) InstallApp(bottleID, installerPath string) (string, error) {
+	if a.core == nil || a.core.Apps == nil {
+		return "", errBottlesUnavailable
+	}
+	proc, err := a.core.Apps.Install(a.ctx, bottleID, installerPath)
+	if err != nil {
+		return "", err
+	}
+	return string(proc.ID()), nil
+}
+
+// LaunchApp starts an already-installed app inside a bottle. exePath
+// is either absolute or relative to <prefix>/drive_c — same contract
+// as the apps.launch MCP method.
+func (a *App) LaunchApp(bottleID, exePath string) (string, error) {
+	if a.core == nil || a.core.Apps == nil {
+		return "", errBottlesUnavailable
+	}
+	proc, err := a.core.Apps.Launch(a.ctx, bottleID, exePath)
+	if err != nil {
+		return "", err
+	}
+	return string(proc.ID()), nil
+}
+
+// ListProcesses returns every tracked process (alive + exited),
+// optionally filtered by bottleID. Empty bottleID returns all.
+func (a *App) ListProcesses(bottleID string) ([]ProcessSummary, error) {
+	if a.core == nil || a.core.Runner == nil {
+		return []ProcessSummary{}, nil
+	}
+	ps := a.core.Runner.List()
+	out := make([]ProcessSummary, 0, len(ps))
+	for _, p := range ps {
+		if bottleID != "" && p.BottleID() != bottleID {
+			continue
+		}
+		s := ProcessSummary{
+			RunID:     string(p.ID()),
+			BottleID:  p.BottleID(),
+			Argv:      p.Argv(),
+			StartedAt: p.StartedAt().UTC().Format("2006-01-02T15:04:05.000Z"),
+			LogPath:   p.LogPath(),
+			Exited:    p.Exited(),
+			ExitCode:  p.ExitCode(),
+			RunErr:    p.RunErr(),
+		}
+		if t := p.ExitedAt(); !t.IsZero() {
+			s.ExitedAt = t.UTC().Format("2006-01-02T15:04:05.000Z")
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+// ProcessLogs reads up to limit bytes from a process's log file
+// starting at offset. The frontend's log viewer polls this in a loop
+// while Exited is false (and once more after to drain the tail).
+func (a *App) ProcessLogs(runID string, offset int64, limit int) (*LogsChunk, error) {
+	if a.core == nil || a.core.Runner == nil {
+		return nil, errBottlesUnavailable
+	}
+	proc, ok := a.core.Runner.Get(runnerID(runID))
+	if !ok {
+		return nil, errProcessNotFound
+	}
+	data, next, exited, err := proc.Logs(offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	return &LogsChunk{Bytes: string(data), NextOffset: next, Exited: exited}, nil
+}
+
+// KillProcess sends SIGTERM (escalating to SIGKILL after 2s) to the
+// running process. No-op if it's already exited.
+func (a *App) KillProcess(runID string) error {
+	if a.core == nil || a.core.Runner == nil {
+		return errBottlesUnavailable
+	}
+	proc, ok := a.core.Runner.Get(runnerID(runID))
+	if !ok {
+		return errProcessNotFound
+	}
+	return proc.Kill()
 }

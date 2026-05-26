@@ -42,6 +42,12 @@ func RegisterAll(b *bridge.Bridge, c *Core) {
 	reg("process.get", c.handleProcessGet)
 	reg("process.kill", c.handleProcessKill)
 	reg("process.logs", c.handleProcessLogs)
+
+	// --- Prefix tweaks (the repair surface) ------------------------------
+	reg("env.set", c.handleEnvSet)
+	reg("env.get", c.handleEnvGet)
+	reg("dll.override", c.handleDLLOverride)
+	reg("winetricks.run", c.handleWinetricksRun)
 }
 
 // pingResult is the response shape for bridge.ping — kept stable across

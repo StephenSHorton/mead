@@ -32,13 +32,29 @@ the user Googling DXVK env vars at midnight.
 ```bash
 git clone https://github.com/StephenSHorton/mead
 cd mead
+./scripts/check-gptk-macos.sh    # one-time setup verification
 wails build
 ```
 
-The bundle lands at `build/bin/mead.app`. v0.1 doesn't bundle a Wine
-binary yet — the `wine.Locator` stub falls back to `wine64` on PATH, so
-install GPTK via `brew install game-porting-toolkit` to exercise the
-real path once it lands.
+The bundle lands at `build/bin/mead.app`.
+
+### Wine setup (one-time)
+
+Mead spawns Apple's Game Porting Toolkit (GPTK) — a Wine fork with
+D3DMetal — for everything it does inside a bottle. Install via Apple's
+Homebrew tap:
+
+```bash
+brew tap apple/apple http://github.com/apple/homebrew-apple
+brew install apple/apple/game-porting-toolkit
+brew install winetricks      # optional but recommended
+```
+
+Then run `./scripts/check-gptk-macos.sh` to verify Mead can find them.
+`wine.Locator` resolves binaries in this order: `MEAD_WINE_PATH` env →
+bundled GPTK at `<app>/Contents/Resources/wine/bin/wine64` → Homebrew
+GPTK → PATH lookup. v0.2 doesn't bundle GPTK into the .app — users
+install it themselves via brew. Bundling is a v0.3 distribution concern.
 
 ## Talking to the bridge
 

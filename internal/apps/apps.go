@@ -28,21 +28,30 @@ import (
 	"github.com/StephenSHorton/mead/internal/runner"
 	"github.com/StephenSHorton/mead/internal/store"
 	"github.com/StephenSHorton/mead/internal/wine"
+	"github.com/StephenSHorton/mead/internal/winetricks"
 )
 
 // Manager is the entry point for app-level operations. Construct one
 // per process; meadcore.Core owns it.
+//
+// Despite the package name, this Manager also owns winetricks
+// invocations — they share all the same plumbing (bottle env, wine
+// path, runner spawn, per-bottle log dir) and don't warrant their
+// own package for one method. Rename the package if a third
+// "thing-you-run-in-a-bottle" lands.
 type Manager struct {
-	store   *store.Store
-	bottles *bottles.Manager
-	wine    *wine.Locator
-	runner  *runner.Runner
+	store       *store.Store
+	bottles     *bottles.Manager
+	wine        *wine.Locator
+	winetricks  *winetricks.Locator
+	runner      *runner.Runner
 }
 
-// New returns a Manager wired to the given dependencies. All four
-// must be non-nil.
-func New(s *store.Store, b *bottles.Manager, w *wine.Locator, r *runner.Runner) *Manager {
-	return &Manager{store: s, bottles: b, wine: w, runner: r}
+// New returns a Manager wired to the given dependencies. wt may be
+// nil; winetricks.run will then report ErrNotFound from the Locator
+// chain itself.
+func New(s *store.Store, b *bottles.Manager, w *wine.Locator, wt *winetricks.Locator, r *runner.Runner) *Manager {
+	return &Manager{store: s, bottles: b, wine: w, winetricks: wt, runner: r}
 }
 
 // Install kicks off a Windows installer inside the named bottle and
@@ -100,6 +109,44 @@ func (m *Manager) Launch(ctx context.Context, bottleID, exePath string) (*runner
 	if err != nil {
 		return nil, err
 	}
+	return m.runner.Spawn(ctx, spec)
+}
+
+// RunWinetricks invokes the winetricks bash script against the named
+// bottle, asking it to install/configure the given verb (e.g.
+// "d3dx9", "dotnet48", "vcrun2019"). Detached so the agent can poll
+// process.logs — winetricks installs are minutes-slow.
+//
+// The composed argv is `<winetricks> --unattended <verb>`. Winetricks
+// honors WINEPREFIX from env. We also set WINE to the resolved wine
+// binary path so winetricks doesn't fall back to its own PATH lookup
+// (which may pick a different wine than Mead's locator did, leading
+// to confusing "I told it to install but the bottle didn't change"
+// bugs).
+func (m *Manager) RunWinetricks(ctx context.Context, bottleID, verb string) (*runner.Process, error) {
+	if strings.TrimSpace(verb) == "" {
+		return nil, ErrWinetricksVerbRequired
+	}
+	if m.winetricks == nil {
+		return nil, ErrWinetricksLocatorNotWired
+	}
+	wtPath, err := m.winetricks.Path()
+	if err != nil {
+		return nil, fmt.Errorf("locate winetricks: %w", err)
+	}
+	winePath, err := m.wine.Path()
+	if err != nil {
+		return nil, fmt.Errorf("locate wine: %w", err)
+	}
+	spec, err := m.specForBottle(bottleID, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Replace the wine argv with winetricks argv. The env (WINEPREFIX
+	// + any bottle overrides) is already composed; we add WINE so
+	// winetricks shells to the same binary Mead uses.
+	spec.Argv = []string{wtPath, "--unattended", verb}
+	spec.Env["WINE"] = winePath
 	return m.runner.Spawn(ctx, spec)
 }
 
@@ -163,9 +210,21 @@ func (m *Manager) specForBottle(bottleID string, wineArgs []string) (runner.Spec
 	// per process.
 	logPath := filepath.Join(logsDir, uniqueLogName())
 
+	// Fold the bottle's persisted env overrides (set via env.set /
+	// dll.override) into the spec's env. WINEPREFIX is set last so a
+	// rogue env.set("WINEPREFIX", "/somewhere/else") can't break
+	// bottle isolation.
+	env := map[string]string{}
+	if overrides, err := m.bottles.EnvOverrides(b.ID); err == nil {
+		for k, v := range overrides {
+			env[k] = v
+		}
+	}
+	env["WINEPREFIX"] = prefix
+
 	return runner.Spec{
 		Argv:     append([]string{winePath}, wineArgs...),
-		Env:      map[string]string{"WINEPREFIX": prefix},
+		Env:      env,
 		BottleID: b.ID,
 		LogPath:  logPath,
 	}, nil
