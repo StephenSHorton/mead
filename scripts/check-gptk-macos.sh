@@ -4,6 +4,18 @@
 # prints the path wine.Locator will pick up. Run it after a fresh
 # clone (or after upgrading macOS) to confirm Mead can spawn Wine.
 #
+# Two install paths exist, both supported:
+#
+#  - apple/apple/game-porting-toolkit (formula): Apple's official tap.
+#    Builds Wine from source. As of late 2026 this formula depends on
+#    openssl@1.1 which has been retired from Homebrew core — installs
+#    may fail until Apple updates the formula. Check Apple's tap for
+#    the current state.
+#
+#  - gcenx/wine/game-porting-toolkit (cask): community-maintained,
+#    ships a prebuilt Intel-arch binary (Rosetta 2 required on M-series
+#    Macs). More reliable in practice; what we recommend today.
+#
 # Output is intentionally chatty — it's meant for human troubleshooting
 # rather than scripting. Exit code 0 = ready to go; non-zero = setup
 # work needed (the message says what).
@@ -20,47 +32,49 @@ echo
 # 1. Homebrew itself.
 if ! command -v brew >/dev/null 2>&1; then
   red "✗ Homebrew is not installed."
-  echo
   echo "  Install it from https://brew.sh and rerun this script."
   exit 1
 fi
 green "✓ Homebrew: $(brew --version | head -1)"
 
-# 2. game-porting-toolkit formula.
-if ! brew --prefix game-porting-toolkit >/dev/null 2>&1; then
-  red "✗ game-porting-toolkit formula is not installed."
+# 2. Locate wine64. Three places to check, in priority order matching
+# wine.Locator's resolution chain:
+#  - the Apple tap's brew prefix
+#  - $(brew --prefix)/bin (where the gcenx cask symlinks land)
+#  - PATH
+WINE_BIN=""
+SOURCE=""
+if PREFIX="$(brew --prefix game-porting-toolkit 2>/dev/null)" && [[ -x "$PREFIX/bin/wine64" ]]; then
+  WINE_BIN="$PREFIX/bin/wine64"
+  SOURCE="apple/apple formula"
+elif [[ -x "$(brew --prefix)/bin/wine64" ]]; then
+  WINE_BIN="$(brew --prefix)/bin/wine64"
+  SOURCE="gcenx/wine cask (symlinked at $(brew --prefix)/bin)"
+elif WHICH_WINE="$(command -v wine64 2>/dev/null)"; then
+  WINE_BIN="$WHICH_WINE"
+  SOURCE="PATH"
+fi
+
+if [[ -z "$WINE_BIN" ]]; then
+  red "✗ wine64 not found in any of the expected locations."
   echo
-  echo "  Install it with:"
+  echo "  Easiest install (gcenx cask, no compile, requires Rosetta 2):"
+  echo "    brew tap gcenx/wine"
+  echo "    brew install --cask gcenx/wine/game-porting-toolkit"
+  echo
+  echo "  Or via Apple's tap (compiles from source, slower):"
   echo "    brew tap apple/apple"
   echo "    brew install apple/apple/game-porting-toolkit"
-  echo
-  echo "  (Apple maintains GPTK in their own tap. The install is large"
-  echo "  — expect 1-2 GB plus a long build.)"
   exit 1
 fi
-GPTK_PREFIX="$(brew --prefix game-porting-toolkit)"
-green "✓ game-porting-toolkit: $GPTK_PREFIX"
 
-# 3. The wine64 binary inside it.
-WINE_BIN="$GPTK_PREFIX/bin/wine64"
-if [[ ! -x "$WINE_BIN" ]]; then
-  red "✗ wine64 not found at $WINE_BIN"
-  echo
-  echo "  The formula is installed but its bin/wine64 is missing."
-  echo "  Try: brew reinstall apple/apple/game-porting-toolkit"
-  exit 1
-fi
 green "✓ wine64 binary: $WINE_BIN"
+echo "  source: $SOURCE"
 echo "  $($WINE_BIN --version 2>/dev/null || echo '(--version failed)')"
 
-# 4. winetricks (optional but recommended).
-if brew --prefix winetricks >/dev/null 2>&1; then
-  WT_BIN="$(brew --prefix winetricks)/bin/winetricks"
-  if [[ -x "$WT_BIN" ]]; then
-    green "✓ winetricks: $WT_BIN"
-  else
-    yellow "! winetricks formula present but binary missing at $WT_BIN"
-  fi
+# 3. winetricks (optional but recommended).
+if command -v winetricks >/dev/null 2>&1; then
+  green "✓ winetricks: $(command -v winetricks)"
 else
   yellow "! winetricks is not installed (optional)."
   echo "  Install it with: brew install winetricks"
@@ -70,5 +84,5 @@ fi
 echo
 bold "Result: Mead can locate Wine."
 echo
-echo "wine.Locator will pick up the brew install via its Homebrew fallback."
-echo "Override with MEAD_WINE_PATH if you want to point at a different binary."
+echo "wine.Locator will pick this up via its PATH fallback. Override with"
+echo "MEAD_WINE_PATH if you want to point at a different binary."

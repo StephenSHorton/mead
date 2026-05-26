@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -97,9 +98,15 @@ func (m *Manager) Create(ctx context.Context, name string) (*Bottle, error) {
 		return nil, fmt.Errorf("resolve prefix dir: %w", err)
 	}
 
-	// wineboot --init creates the prefix directory tree (system.reg,
-	// drive_c/, dosdevices/, …). WINEPREFIX must be absolute; the
-	// store layer guarantees that.
+	// wineboot --init creates the prefix's interior (system.reg,
+	// drive_c/, dosdevices/, …) but does NOT create the WINEPREFIX
+	// directory itself on this version of wine (GPTK 1.1 / wine-7.7
+	// errors with "chdir to <prefix>: No such file or directory"
+	// before it gets a chance to materialize anything). Pre-create
+	// the dir so wineboot has somewhere to land.
+	if err := os.MkdirAll(prefixDir, 0o755); err != nil {
+		return nil, fmt.Errorf("pre-create prefix dir: %w", err)
+	}
 	res, err := m.runner.Run(ctx, runner.Spec{
 		Argv: []string{winePath, "wineboot", "--init"},
 		Env:  map[string]string{"WINEPREFIX": prefixDir},
