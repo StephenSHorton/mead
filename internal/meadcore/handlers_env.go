@@ -106,6 +106,13 @@ func (c *Core) handleDLLOverride(raw json.RawMessage) (any, error) {
 	return pingResult{OK: true}, nil
 }
 
+// SetDLLOverrideExternal is the exported alias of setDLLOverride for
+// the Wails binding layer (app.go). The MCP handler keeps the
+// unexported name to avoid leaking the entire meadcore surface.
+func SetDLLOverrideExternal(current, dll, mode string) string {
+	return setDLLOverride(current, dll, mode)
+}
+
 // setDLLOverride parses a WINEDLLOVERRIDES string, sets (or removes)
 // the entry for the given dll, and returns the recomposed string. The
 // canonical form preserves entry order; new entries are appended.

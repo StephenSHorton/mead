@@ -10,6 +10,8 @@ export function CreateBottle(arg1:string):Promise<main.BottleSummary>;
 
 export function DeleteBottle(arg1:string):Promise<void>;
 
+export function GetEnv(arg1:string):Promise<Record<string, string>>;
+
 export function InstallApp(arg1:string,arg2:string,arg3:Array<string>):Promise<string>;
 
 export function KillProcess(arg1:string):Promise<void>;
@@ -21,3 +23,9 @@ export function ListBottles():Promise<Array<main.BottleSummary>>;
 export function ListProcesses(arg1:string):Promise<Array<main.ProcessSummary>>;
 
 export function ProcessLogs(arg1:string,arg2:number,arg3:number):Promise<main.LogsChunk>;
+
+export function RunWinetricks(arg1:string,arg2:string):Promise<string>;
+
+export function SetDLLOverride(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SetEnv(arg1:string,arg2:string,arg3:string):Promise<void>;

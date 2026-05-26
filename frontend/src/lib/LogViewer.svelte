@@ -1,68 +1,114 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte'
+  import { tick } from 'svelte'
   import { ProcessLogs, KillProcess } from '../../wailsjs/go/main/App.js'
   import { errMessage } from './format'
 
-  export let runID: string
-  // Initial exited state from the parent; the polling response is the source of truth after that.
-  export let initialExited: boolean = false
-  export let exitCode: number | undefined = undefined
+  import { Button } from '$lib/components/ui/button'
+  import { Badge } from '$lib/components/ui/badge'
+  import { Alert, AlertDescription } from '$lib/components/ui/alert'
+  import SquareIcon from '@lucide/svelte/icons/square'
+  import AlertCircleIcon from '@lucide/svelte/icons/alert-circle'
+  import ArrowDownIcon from '@lucide/svelte/icons/arrow-down'
 
-  let bytes = ''
-  let offset = 0
-  let exited = initialExited
-  let drained = false
-  let loadError = ''
+  let {
+    runID,
+    initialExited = false,
+    exitCode = undefined as number | undefined,
+  }: {
+    runID: string
+    initialExited?: boolean
+    exitCode?: number
+  } = $props()
 
-  let killing = false
-  let killError = ''
+  let bytes = $state('')
+  let offset = $state(0)
+  let exited = $state(false)
+  let loadError = $state('')
 
-  let timer: ReturnType<typeof setTimeout> | null = null
-  let cancelled = false
-  let logEl: HTMLPreElement | null = null
+  // Seed `exited` from the initial prop once at mount.
+  $effect(() => {
+    exited = initialExited
+  })
+
+  let killing = $state(false)
+  let killError = $state('')
+
+  let scrollContainer = $state<HTMLDivElement | null>(null)
+  let atBottom = $state(true)
 
   const CHUNK = 65536
   const INTERVAL_MS = 750
 
-  async function pollOnce() {
-    if (cancelled) return
-    try {
-      const chunk = await ProcessLogs(runID, offset, CHUNK)
-      if (cancelled) return
-      if (chunk.bytes && chunk.bytes.length > 0) {
-        const wasNearBottom = logEl
-          ? logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40
-          : true
-        bytes += chunk.bytes
-        if (logEl && wasNearBottom) {
-          // queue scroll after Svelte updates the DOM
-          setTimeout(() => {
-            if (logEl) logEl.scrollTop = logEl.scrollHeight
-          }, 0)
-        }
-      }
-      offset = chunk.next_offset
-      // If we previously saw exited but were polling once more to drain the tail, stop now.
-      if (exited && !drained) {
-        drained = true
-        return
-      }
-      if (chunk.exited) {
-        exited = true
-        // Schedule one more pass to drain anything written between the prior poll and exit.
-        timer = setTimeout(pollOnce, 200)
-        return
-      }
-      loadError = ''
-      timer = setTimeout(pollOnce, INTERVAL_MS)
-    } catch (err) {
-      loadError = errMessage(err)
-      if (!cancelled && !exited) {
-        // Back off briefly on error, then retry.
-        timer = setTimeout(pollOnce, 1500)
-      }
+  function isNearBottom(el: HTMLElement | null): boolean {
+    if (!el) return true
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 40
+  }
+
+  function onScroll() {
+    atBottom = isNearBottom(scrollContainer)
+  }
+
+  async function scrollToBottom() {
+    await tick()
+    if (scrollContainer) {
+      scrollContainer.scrollTop = scrollContainer.scrollHeight
+      atBottom = true
     }
   }
+
+  // Incremental polling — fetch (offset → chunk), append, schedule next.
+  // After the server reports exited=true we do one more pass to drain any
+  // bytes written between the prior poll and exit, then stop. Errors back off.
+  $effect(() => {
+    let cancelled = false
+    let drained = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    // Reset state when runID changes (parent uses {#key} so this shouldn't
+    // re-run for an existing instance, but keep the reset for safety).
+    bytes = ''
+    offset = 0
+    loadError = ''
+    atBottom = true
+
+    async function pollOnce() {
+      if (cancelled) return
+      try {
+        const chunk = await ProcessLogs(runID, offset, CHUNK)
+        if (cancelled) return
+        if (chunk.bytes && chunk.bytes.length > 0) {
+          const wasNearBottom = isNearBottom(scrollContainer)
+          bytes += chunk.bytes
+          if (wasNearBottom) void scrollToBottom()
+        }
+        offset = chunk.next_offset
+        if (exited && !drained) {
+          drained = true
+          return
+        }
+        if (chunk.exited) {
+          exited = true
+          // Schedule a final drain pass.
+          timer = setTimeout(pollOnce, 200)
+          return
+        }
+        loadError = ''
+        timer = setTimeout(pollOnce, INTERVAL_MS)
+      } catch (err) {
+        loadError = errMessage(err)
+        if (!cancelled && !exited) {
+          timer = setTimeout(pollOnce, 1500)
+        }
+      }
+    }
+
+    void pollOnce()
+
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  })
 
   async function kill() {
     if (killing || exited) return
@@ -76,125 +122,73 @@
       killing = false
     }
   }
-
-  // Kick off the polling loop. runID is set at mount and not expected to change for a given viewer.
-  pollOnce()
-
-  onDestroy(() => {
-    cancelled = true
-    if (timer) {
-      clearTimeout(timer)
-      timer = null
-    }
-  })
 </script>
 
-<div class="logs">
-  <div class="logs-head">
-    <span class="run-id" title={runID}>run {runID.slice(0, 8)}</span>
+<div class="bg-card mt-2 rounded-md border p-2">
+  <div class="mb-2 flex items-center gap-2">
+    <span class="text-muted-foreground font-mono text-[0.7rem]">
+      run {runID.slice(0, 8)}
+    </span>
     {#if exited}
-      <span class="status exited">
+      <Badge variant={exitCode === 0 ? 'secondary' : 'destructive'} class="text-[0.65rem]">
         Exited{exitCode !== undefined ? ` · code ${exitCode}` : ''}
-      </span>
+      </Badge>
     {:else}
-      <span class="status running">Running</span>
-      <button class="btn-danger" on:click={kill} disabled={killing}>
+      <Badge class="text-[0.65rem]">Running</Badge>
+      <Button
+        variant="destructive"
+        size="xs"
+        class="ml-auto"
+        onclick={kill}
+        disabled={killing}
+      >
+        <SquareIcon />
         {killing ? 'Killing…' : 'Kill'}
-      </button>
+      </Button>
     {/if}
   </div>
 
   {#if killError}
-    <p class="error">kill: {killError}</p>
+    <Alert variant="destructive" class="mb-2">
+      <AlertCircleIcon />
+      <AlertDescription>kill: {killError}</AlertDescription>
+    </Alert>
   {/if}
   {#if loadError}
-    <p class="error">logs: {loadError}</p>
+    <Alert variant="destructive" class="mb-2">
+      <AlertCircleIcon />
+      <AlertDescription>logs: {loadError}</AlertDescription>
+    </Alert>
   {/if}
 
-  <pre class="log-body" bind:this={logEl}>{bytes || (exited ? '(no output)' : 'Waiting for output…')}</pre>
+  <!--
+    Log surface. We kept the plain scrollable <div> rather than shadcn's
+    <ScrollArea> — ScrollArea uses a virtual viewport which fights the
+    "stick to bottom while content streams" pattern (the viewport's scroll
+    position resets relative to a wrapped child, so isNearBottom() returns
+    stale values during paint). The plain div with bg-card / border / rounded
+    matches shadcn surface styling.
+  -->
+  <div class="relative">
+    <div
+      bind:this={scrollContainer}
+      onscroll={onScroll}
+      class="bg-background text-foreground/90 h-[360px] overflow-auto rounded-md border"
+    >
+      <pre
+        class="m-0 p-2 font-mono text-[0.72rem] leading-relaxed whitespace-pre-wrap break-all"
+      >{bytes || (exited ? '(no output)' : 'Waiting for output…')}</pre>
+    </div>
+    {#if !atBottom}
+      <Button
+        size="xs"
+        variant="outline"
+        class="absolute right-2 bottom-2 shadow-sm"
+        onclick={scrollToBottom}
+      >
+        <ArrowDownIcon />
+        Scroll to bottom
+      </Button>
+    {/if}
+  </div>
 </div>
-
-<style>
-  .logs {
-    margin-top: 0.5rem;
-    background: rgba(0, 0, 0, 0.35);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 6px;
-    padding: 0.6rem 0.75rem;
-  }
-
-  .logs-head {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    margin-bottom: 0.4rem;
-  }
-
-  .run-id {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 0.75rem;
-    color: #9aa3b1;
-  }
-
-  .status {
-    font-size: 0.75rem;
-    padding: 0.1rem 0.4rem;
-    border-radius: 3px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
-  }
-
-  .status.running {
-    background: rgba(59, 130, 246, 0.15);
-    color: #93c5fd;
-  }
-
-  .status.exited {
-    background: rgba(255, 255, 255, 0.06);
-    color: #9aa3b1;
-  }
-
-  .btn-danger {
-    font-family: inherit;
-    font-size: 0.75rem;
-    padding: 0.2rem 0.55rem;
-    border-radius: 4px;
-    background: #b91c1c;
-    color: white;
-    border: 1px solid #b91c1c;
-    cursor: pointer;
-    margin-left: auto;
-  }
-
-  .btn-danger:hover:not(:disabled) {
-    background: #991b1b;
-    border-color: #991b1b;
-  }
-
-  .btn-danger:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .log-body {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 0.78rem;
-    line-height: 1.4;
-    color: #d1d5db;
-    background: rgba(0, 0, 0, 0.45);
-    border-radius: 4px;
-    padding: 0.5rem 0.6rem;
-    margin: 0;
-    max-height: 280px;
-    overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-
-  .error {
-    color: #f87171;
-    font-size: 0.8rem;
-    margin: 0 0 0.4rem;
-  }
-</style>

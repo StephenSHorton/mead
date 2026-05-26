@@ -297,3 +297,66 @@ func (a *App) KillProcess(runID string) error {
 	}
 	return proc.Kill()
 }
+
+// ---- Prefix-tweak bindings -----------------------------------------------
+// Surface the env / dll / winetricks operations to the frontend so the GUI
+// can drive the same repair surface MCP clients use. Same semantics as the
+// corresponding MCP methods (env.set / env.get / dll.override / winetricks.run).
+
+// SetEnv sets (or clears with empty value) one entry in the bottle's
+// persisted env_overrides map. Apps spawned in the bottle inherit these.
+func (a *App) SetEnv(bottleID, key, value string) error {
+	if a.core == nil || a.core.Bottles == nil {
+		return errBottlesUnavailable
+	}
+	return a.core.Bottles.SetEnv(bottleID, key, value)
+}
+
+// GetEnv returns the bottle's persisted env_overrides map. Empty map if none.
+func (a *App) GetEnv(bottleID string) (map[string]string, error) {
+	if a.core == nil || a.core.Bottles == nil {
+		return map[string]string{}, nil
+	}
+	env, err := a.core.Bottles.EnvOverrides(bottleID)
+	if err != nil {
+		return nil, err
+	}
+	if env == nil {
+		return map[string]string{}, nil
+	}
+	return env, nil
+}
+
+// SetDLLOverride composes/parses WINEDLLOVERRIDES on top of env.set. mode
+// can be "native", "builtin", "native,builtin", "builtin,native",
+// "disabled" (the dll= empty form), or "" to remove the override.
+// Mirrors the MCP dll.override semantics.
+func (a *App) SetDLLOverride(bottleID, dll, mode string) error {
+	if a.core == nil || a.core.Bottles == nil {
+		return errBottlesUnavailable
+	}
+	current, err := a.core.Bottles.EnvOverrides(bottleID)
+	if err != nil {
+		return err
+	}
+	var existing string
+	if current != nil {
+		existing = current["WINEDLLOVERRIDES"]
+	}
+	updated := meadcore.SetDLLOverrideExternal(existing, dll, mode)
+	return a.core.Bottles.SetEnv(bottleID, "WINEDLLOVERRIDES", updated)
+}
+
+// RunWinetricks invokes winetricks against a bottle with the given verb
+// (d3dx9, dotnet48, vcrun2022, corefonts, etc). Returns the RunID so the
+// frontend can poll process.logs while the install runs.
+func (a *App) RunWinetricks(bottleID, verb string) (string, error) {
+	if a.core == nil || a.core.Apps == nil {
+		return "", errBottlesUnavailable
+	}
+	proc, err := a.core.Apps.RunWinetricks(a.ctx, bottleID, verb)
+	if err != nil {
+		return "", err
+	}
+	return string(proc.ID()), nil
+}

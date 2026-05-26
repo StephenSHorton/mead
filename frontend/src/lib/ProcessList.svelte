@@ -2,12 +2,28 @@
   import type { main } from '../../wailsjs/go/models'
   import LogViewer from './LogViewer.svelte'
   import { fmtRelative } from './format'
+  import { ui } from './store.svelte'
 
-  export let processes: main.ProcessSummary[] = []
-  export let loading: boolean = false
-  export let error: string = ''
+  import { Button } from '$lib/components/ui/button'
+  import { Badge } from '$lib/components/ui/badge'
+  import { Alert, AlertDescription } from '$lib/components/ui/alert'
+  import TerminalIcon from '@lucide/svelte/icons/terminal'
+  import AlertCircleIcon from '@lucide/svelte/icons/alert-circle'
+  import PackageOpenIcon from '@lucide/svelte/icons/package-open'
 
-  let openRunID: string | null = null
+  let {
+    processes = [],
+    loading = false,
+    error = '',
+    bottleID = '',
+  }: {
+    processes?: main.ProcessSummary[]
+    loading?: boolean
+    error?: string
+    bottleID?: string
+  } = $props()
+
+  let openRunID = $state<string | null>(null)
 
   function toggleLogs(runID: string) {
     openRunID = openRunID === runID ? null : runID
@@ -17,200 +33,82 @@
     if (!argv || argv.length === 0) return '(unknown command)'
     return argv.join(' ')
   }
+
+  // Returns the badge variant for an exited process. code=0 is "ok" (secondary),
+  // any non-zero code or a run_err implies failure (destructive). The Go side
+  // surfaces signal kills as a populated run_err (and may set exit_code to -1).
+  function exitVariant(p: main.ProcessSummary): 'secondary' | 'destructive' {
+    if (p.run_err) return 'destructive'
+    if (p.exit_code === undefined) return 'secondary'
+    return p.exit_code === 0 ? 'secondary' : 'destructive'
+  }
 </script>
 
-<div class="proc">
-  <h3>Processes</h3>
-
+<div>
   {#if error}
-    <p class="error">{error}</p>
+    <Alert variant="destructive" class="mb-2">
+      <AlertCircleIcon />
+      <AlertDescription>{error}</AlertDescription>
+    </Alert>
   {/if}
 
   {#if loading && processes.length === 0}
-    <p class="muted small">Loading…</p>
+    <p class="text-muted-foreground text-xs">Loading…</p>
   {:else if processes.length === 0}
-    <p class="empty">No processes for this bottle yet. Install or launch an app to start one.</p>
+    <div class="text-muted-foreground bg-card flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-10 text-center">
+      <PackageOpenIcon class="text-muted-foreground/60 size-8" />
+      <p class="text-sm">Nothing's been run in this bottle yet</p>
+      <p class="text-xs">Install an app or launch one to get going.</p>
+      <Button
+        size="sm"
+        variant="outline"
+        class="mt-2"
+        onclick={() => ui.openTab('apps', true)}
+        disabled={!bottleID}
+      >
+        Install an app
+      </Button>
+    </div>
   {:else}
-    <ul class="proc-list">
+    <ul class="divide-y divide-border/50 bg-card rounded-md border">
       {#each processes as p (p.run_id)}
-        <li class="proc-row" class:open={openRunID === p.run_id}>
-          <div class="proc-main">
-            <code class="argv" title={joinArgv(p.argv)}>{joinArgv(p.argv)}</code>
-            <span class="proc-meta">
-              <span class="started">{fmtRelative(p.started_at)}</span>
-              {#if p.exited}
-                <span class="state exited">
-                  Exited{p.exit_code !== undefined ? ` · code ${p.exit_code}` : ''}
-                </span>
-              {:else}
-                <span class="state running">Running</span>
-              {/if}
-              {#if p.run_err}
-                <span class="run-err" title={p.run_err}>error</span>
-              {/if}
-            </span>
-          </div>
-          <div class="proc-actions">
-            <button class="btn-ghost" on:click={() => toggleLogs(p.run_id)}>
-              {openRunID === p.run_id ? 'Hide logs' : 'View logs'}
-            </button>
+        <li class="p-2.5 {openRunID === p.run_id ? 'bg-muted/30' : ''}">
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="min-w-0 flex-1">
+              <code
+                class="bg-background block truncate rounded px-1.5 py-0.5 text-xs"
+                title={joinArgv(p.argv)}
+              >
+                {joinArgv(p.argv)}
+              </code>
+              <div class="text-muted-foreground mt-1 flex items-center gap-2 text-[0.7rem]">
+                <span>{fmtRelative(p.started_at)}</span>
+                {#if p.exited}
+                  <Badge variant={exitVariant(p)} class="text-[0.65rem]">
+                    Exited{p.exit_code !== undefined ? ` · code ${p.exit_code}` : ''}
+                  </Badge>
+                {:else}
+                  <Badge class="text-[0.65rem]">Running</Badge>
+                {/if}
+                {#if p.run_err}
+                  <Badge variant="destructive" class="text-[0.65rem]" title={p.run_err}>
+                    {p.exited ? 'killed' : 'error'}
+                  </Badge>
+                {/if}
+              </div>
+            </div>
+            <Button variant="outline" size="xs" onclick={() => toggleLogs(p.run_id)}>
+              <TerminalIcon />
+              {openRunID === p.run_id ? 'Hide logs' : 'Logs'}
+            </Button>
           </div>
           {#if openRunID === p.run_id}
-            <div class="logs-wrap">
-              {#key p.run_id}
-                <LogViewer runID={p.run_id} initialExited={p.exited} exitCode={p.exit_code} />
-              {/key}
-            </div>
+            {#key p.run_id}
+              <LogViewer runID={p.run_id} initialExited={p.exited} exitCode={p.exit_code} />
+            {/key}
           {/if}
         </li>
       {/each}
     </ul>
   {/if}
 </div>
-
-<style>
-  .proc {
-    margin-top: 0.75rem;
-  }
-
-  h3 {
-    margin: 0 0 0.5rem;
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #9aa3b1;
-    font-weight: 600;
-  }
-
-  .empty {
-    color: #6b7480;
-    margin: 0;
-    font-size: 0.85rem;
-  }
-
-  .muted {
-    color: #6b7480;
-  }
-
-  .small {
-    font-size: 0.85rem;
-  }
-
-  .error {
-    color: #f87171;
-    font-size: 0.85rem;
-    margin: 0 0 0.4rem;
-  }
-
-  .proc-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-
-  .proc-row {
-    padding: 0.45rem 0.25rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .proc-row:last-child {
-    border-bottom: none;
-  }
-
-  .proc-row.open {
-    background: rgba(255, 255, 255, 0.02);
-    border-radius: 5px;
-    padding-left: 0.5rem;
-    padding-right: 0.5rem;
-  }
-
-  .proc-main {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .argv {
-    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-    font-size: 0.8rem;
-    color: #e6e6e6;
-    background: rgba(0, 0, 0, 0.3);
-    padding: 0.15rem 0.4rem;
-    border-radius: 4px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 100%;
-  }
-
-  .proc-meta {
-    display: flex;
-    align-items: center;
-    gap: 0.65rem;
-    font-size: 0.78rem;
-    color: #6b7480;
-  }
-
-  .started {
-    color: #9aa3b1;
-  }
-
-  .state {
-    font-size: 0.7rem;
-    padding: 0.08rem 0.4rem;
-    border-radius: 3px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    font-weight: 600;
-  }
-
-  .state.running {
-    background: rgba(59, 130, 246, 0.15);
-    color: #93c5fd;
-  }
-
-  .state.exited {
-    background: rgba(255, 255, 255, 0.06);
-    color: #9aa3b1;
-  }
-
-  .run-err {
-    color: #f87171;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .proc-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  .btn-ghost {
-    font-family: inherit;
-    font-size: 0.78rem;
-    padding: 0.25rem 0.6rem;
-    border-radius: 4px;
-    background: transparent;
-    color: #9aa3b1;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    cursor: pointer;
-    transition: color 120ms ease, border-color 120ms ease;
-  }
-
-  .btn-ghost:hover {
-    color: #e6e6e6;
-    border-color: rgba(255, 255, 255, 0.24);
-  }
-
-  .logs-wrap {
-    flex-basis: 100%;
-  }
-</style>

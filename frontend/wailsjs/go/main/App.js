@@ -18,6 +18,10 @@ export function DeleteBottle(arg1) {
   return window['go']['main']['App']['DeleteBottle'](arg1);
 }
 
+export function GetEnv(arg1) {
+  return window['go']['main']['App']['GetEnv'](arg1);
+}
+
 export function InstallApp(arg1, arg2, arg3) {
   return window['go']['main']['App']['InstallApp'](arg1, arg2, arg3);
 }
@@ -40,4 +44,16 @@ export function ListProcesses(arg1) {
 
 export function ProcessLogs(arg1, arg2, arg3) {
   return window['go']['main']['App']['ProcessLogs'](arg1, arg2, arg3);
+}
+
+export function RunWinetricks(arg1, arg2) {
+  return window['go']['main']['App']['RunWinetricks'](arg1, arg2);
+}
+
+export function SetDLLOverride(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetDLLOverride'](arg1, arg2, arg3);
+}
+
+export function SetEnv(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetEnv'](arg1, arg2, arg3);
 }
