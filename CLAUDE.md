@@ -69,17 +69,17 @@ Svelte + TS + Vite, compiled into `frontend/dist/` and embedded into the Go bina
 
 Single registration point: `meadcore.RegisterAll`. Naming convention: `<noun>.<verb>` (e.g. `bottles.list`, `apps.install`). Wired in v0.1:
 
-| Surface | Tools (✓ wired, ◯ stub-returning) |
+| Surface | Tools (✓ implemented, ◯ stub-returning) |
 |---|---|
 | Liveness | ✓ `bridge.ping`, ✓ `bridge.version` |
-| Wine | ◯ `wine.version` |
-| Bottles | ◯ `bottles.list`, ◯ `bottles.create` |
+| Wine | ✓ `wine.version` (resolves env / bundled GPTK / Homebrew / PATH) |
+| Bottles | ✓ `bottles.list`, ✓ `bottles.create`, ✓ `bottles.get`, ✓ `bottles.delete` |
 
 Planned (land as the underlying packages get bodies):
 
 | Surface | Tools |
 |---|---|
-| Bottles | `bottles.clone`, `bottles.delete` |
+| Bottles | `bottles.clone` |
 | Apps | `apps.install`, `apps.list`, `apps.launch`, `apps.uninstall` |
 | Processes | `processes.list`, `process.kill`, `process.logs` (streaming) |
 | Prefix | `winetricks.run`, `registry.get`/`set`, `env.set`, `dll.override` |

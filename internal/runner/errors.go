@@ -2,7 +2,7 @@ package runner
 
 import "errors"
 
-var errNotImplemented = errors.New("not implemented yet")
-
-// ErrNotImplemented is the exported alias of the package's stub sentinel.
-var ErrNotImplemented = errNotImplemented
+// ErrDetachUnsupported is returned by Run when Spec.Detach=true. v0.1
+// only supports the synchronous (wait + capture) case; detached
+// launching (apps.launch + process.logs streaming) lands in v0.2.
+var ErrDetachUnsupported = errors.New("runner: detached spec not yet supported")

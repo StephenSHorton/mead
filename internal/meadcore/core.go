@@ -10,6 +10,9 @@
 package meadcore
 
 import (
+	"fmt"
+	"log"
+
 	"github.com/StephenSHorton/mead/internal/bottles"
 	"github.com/StephenSHorton/mead/internal/runner"
 	"github.com/StephenSHorton/mead/internal/store"
@@ -25,22 +28,40 @@ type Core struct {
 	Runner  *runner.Runner
 }
 
-// New constructs a fully-wired core. Call RegisterAll(b, c) afterward to
-// expose its operations on the MCP bridge.
+// New constructs a fully-wired core. If the store can't be opened
+// (e.g. ~/Library is read-only), Mead degrades to a bridge-only mode
+// where bottles operations fail but the bridge still answers liveness
+// pings — better than refusing to start.
 //
-// v0.1 returns a Core whose dependencies are present but mostly stub-
-// returning. That's deliberate: we want the wiring shape right before
-// filling in behavior, so the agent surface stays stable as bodies land.
-func New() *Core {
-	// store.Open is allowed to fail (no perms on ~/Library, etc.) but
-	// the stub currently always fails — accept that for now and let
-	// downstream handlers report ErrNotImplemented. When store.Open
-	// gets a real body, propagate its error properly.
-	s, _ := store.Open("")
+// Call RegisterAll(b, c) afterward to expose the operations on the
+// MCP bridge.
+func New() (*Core, error) {
+	s, err := store.Open("")
+	if err != nil {
+		// Log and continue with a nil store; downstream handlers report
+		// the error per-call so the agent can debug.
+		log.Printf("meadcore: store.Open failed: %v (bottles operations will fail; bridge stays up)", err)
+		return &Core{
+			Wine:   wine.New(),
+			Runner: runner.New(),
+		}, nil
+	}
+	w := wine.New()
+	r := runner.New()
 	return &Core{
 		Store:   s,
-		Wine:    wine.New(),
-		Bottles: bottles.New(),
-		Runner:  runner.New(),
+		Wine:    w,
+		Runner:  r,
+		Bottles: bottles.New(s, w, r),
+	}, nil
+}
+
+// requireBottles returns an error suitable for the MCP layer when the
+// bottle manager isn't available (store didn't open). Handlers call
+// this before touching c.Bottles.
+func (c *Core) requireBottles() error {
+	if c.Bottles == nil {
+		return fmt.Errorf("bottles unavailable: store failed to open at startup (see app log)")
 	}
+	return nil
 }

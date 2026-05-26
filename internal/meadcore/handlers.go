@@ -1,8 +1,11 @@
 package meadcore
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 
+	"github.com/StephenSHorton/mead/internal/bottles"
 	"github.com/StephenSHorton/mead/internal/bridge"
 )
 
@@ -26,9 +29,8 @@ func RegisterAll(b *bridge.Bridge, c *Core) {
 	// --- Bottles ----------------------------------------------------------
 	reg("bottles.list", c.handleBottlesList)
 	reg("bottles.create", c.handleBottlesCreate)
-
-	// More methods land as their domain packages get bodies. See CLAUDE.md
-	// for the full planned surface.
+	reg("bottles.get", c.handleBottlesGet)
+	reg("bottles.delete", c.handleBottlesDelete)
 }
 
 // pingResult is the response shape for bridge.ping — kept stable across
@@ -56,10 +58,6 @@ type wineVersionResult struct {
 }
 
 func (c *Core) handleWineVersion(_ json.RawMessage) (any, error) {
-	// Both calls return ErrNotImplemented until wine.Locator is wired up.
-	// The handler still returns a well-formed result for the not-yet-
-	// resolved case so agent clients can distinguish "Wine not located
-	// yet" from a transport error.
 	path, err := c.Wine.Path()
 	if err != nil {
 		return wineVersionResult{}, err
@@ -78,17 +76,30 @@ type bottlesListResult struct {
 type bottleSummary struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
+	CreatedAt   string `json:"created_at,omitempty"`
 	WineVersion string `json:"wine_version,omitempty"`
 }
 
+func toSummary(b *bottles.Bottle) bottleSummary {
+	return bottleSummary{
+		ID:          b.ID,
+		Name:        b.Name,
+		CreatedAt:   b.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		WineVersion: b.WineVersion,
+	}
+}
+
 func (c *Core) handleBottlesList(_ json.RawMessage) (any, error) {
+	if err := c.requireBottles(); err != nil {
+		return nil, err
+	}
 	bs, err := c.Bottles.List()
 	if err != nil {
 		return nil, err
 	}
 	out := make([]bottleSummary, 0, len(bs))
 	for _, b := range bs {
-		out = append(out, bottleSummary{ID: b.ID, Name: b.Name, WineVersion: b.WineVersion})
+		out = append(out, toSummary(b))
 	}
 	return bottlesListResult{Bottles: out}, nil
 }
@@ -98,17 +109,65 @@ type bottlesCreateParams struct {
 }
 
 func (c *Core) handleBottlesCreate(raw json.RawMessage) (any, error) {
+	if err := c.requireBottles(); err != nil {
+		return nil, err
+	}
 	var p bottlesCreateParams
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &p); err != nil {
 			return nil, err
 		}
 	}
-	b, err := c.Bottles.Create(p.Name)
+	// wineboot --init runs synchronously inside the handler; with no
+	// streaming surface yet, an MCP client effectively blocks until the
+	// prefix is materialized (typically 5-15s on a warm install).
+	// Background context: cancellation is currently per-bridge-shutdown
+	// only, which is the right granularity for v0.1.
+	b, err := c.Bottles.Create(context.Background(), p.Name)
 	if err != nil {
 		return nil, err
 	}
-	return bottleSummary{ID: b.ID, Name: b.Name, WineVersion: b.WineVersion}, nil
+	return toSummary(b), nil
+}
+
+type bottlesGetParams struct {
+	ID string `json:"id"`
+}
+
+func (c *Core) handleBottlesGet(raw json.RawMessage) (any, error) {
+	if err := c.requireBottles(); err != nil {
+		return nil, err
+	}
+	var p bottlesGetParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	b, err := c.Bottles.Get(p.ID)
+	if err != nil {
+		if errors.Is(err, bottles.ErrBottleNotFound) {
+			return nil, err
+		}
+		return nil, err
+	}
+	return toSummary(b), nil
+}
+
+type bottlesDeleteParams struct {
+	ID string `json:"id"`
+}
+
+func (c *Core) handleBottlesDelete(raw json.RawMessage) (any, error) {
+	if err := c.requireBottles(); err != nil {
+		return nil, err
+	}
+	var p bottlesDeleteParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	if err := c.Bottles.Delete(p.ID); err != nil {
+		return nil, err
+	}
+	return pingResult{OK: true}, nil
 }
 
 // AppVersion is bumped per release. Wired into bridge.version so agents

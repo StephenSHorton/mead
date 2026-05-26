@@ -25,7 +25,13 @@ type App struct {
 // startup below — so that crashes during Wails init don't leak a
 // listening port + lockfile.
 func NewApp() *App {
-	c := meadcore.New()
+	c, err := meadcore.New()
+	if err != nil {
+		// meadcore.New degrades gracefully on store failures — the
+		// only path that returns an error here would be a future
+		// fatal-on-startup condition, which we'd want to know about.
+		log.Printf("meadcore.New: %v", err)
+	}
 	b := bridge.New(bridge.Config{AppName: "mead"})
 	meadcore.RegisterAll(b, c)
 	return &App{core: c, bridge: b}
