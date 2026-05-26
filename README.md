@@ -48,6 +48,34 @@ port (visible in the app's main view) with a per-pid lockfile at
 [wc3-forge](https://github.com/StephenSHorton/wc3-forge)'s, so any MCP
 client written against that bridge connects unchanged.
 
+## Using Mead with wc3-forge
+
+[wc3-forge](https://github.com/StephenSHorton/wc3-forge) is Mead's
+sibling project — a Warcraft III map editor that reads CASC assets
+from your WC3 install. If you install WC3 into a Mead bottle, point
+wc3-forge at it:
+
+```bash
+# 1. Create a bottle in Mead (via the GUI, or via MCP from Claude Code).
+# 2. Install WC3 into the bottle (Battle.net installer / native macOS
+#    Battle.net client / your method of choice).
+# 3. Point wc3-forge at the bottle's WC3 install:
+
+export WC3FORGE_WC3_PATH=~/Library/Application\ Support/Mead/bottles/<bottle-id>/prefix/drive_c/Program\ Files\ \(x86\)/Warcraft\ III
+~/projects/wc3-forge/build/bin/wc3-forge.app/Contents/MacOS/wc3-forge
+```
+
+The bottle ID is visible in Mead's UI or via `bottles.list` over MCP.
+The path layout is exercised by `TestIntegration_WC3PrefixPath_MatchesWC3ForgeExpectation`
+in `internal/apps/`, which is the load-bearing contract between the
+two projects — if either side moves that path, the test fails.
+
+When apps run into compat issues (missing DLL, registry tweak needed,
+etc.), Claude Code can drive the diagnostic loop via Mead's MCP:
+`process.logs <run_id>` to read what wine printed, decide what's
+wrong, call `winetricks.run` or set an env override, retry. That
+agent debug loop is the whole point.
+
 ## Architecture
 
 ```
