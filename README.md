@@ -45,7 +45,7 @@ D3DMetal — for everything it does inside a bottle. Install via Apple's
 Homebrew tap:
 
 ```bash
-brew tap apple/apple http://github.com/apple/homebrew-apple
+brew tap apple/apple
 brew install apple/apple/game-porting-toolkit
 brew install winetricks      # optional but recommended
 ```

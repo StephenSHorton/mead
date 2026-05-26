@@ -31,7 +31,7 @@ if ! brew --prefix game-porting-toolkit >/dev/null 2>&1; then
   red "✗ game-porting-toolkit formula is not installed."
   echo
   echo "  Install it with:"
-  echo "    brew tap apple/apple http://github.com/apple/homebrew-apple"
+  echo "    brew tap apple/apple"
   echo "    brew install apple/apple/game-porting-toolkit"
   echo
   echo "  (Apple maintains GPTK in their own tap. The install is large"

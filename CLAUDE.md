@@ -67,26 +67,28 @@ Svelte + TS + Vite, compiled into `frontend/dist/` and embedded into the Go bina
 
 ## MCP surface (planned)
 
-Single registration point: `meadcore.RegisterAll`. Naming convention: `<noun>.<verb>` (e.g. `bottles.list`, `apps.install`). Wired in v0.1:
+Single registration point: `meadcore.RegisterAll`. Naming convention: `<noun>.<verb>` (e.g. `bottles.list`, `apps.install`).
 
 | Surface | Tools (✓ implemented, ◯ stub-returning) |
 |---|---|
 | Liveness | ✓ `bridge.ping`, ✓ `bridge.version` |
 | Wine | ✓ `wine.version` (resolves env / bundled GPTK / Homebrew / PATH) |
 | Bottles | ✓ `bottles.list`, ✓ `bottles.create`, ✓ `bottles.get`, ✓ `bottles.delete` |
+| Apps | ✓ `apps.install`, ✓ `apps.launch`, ◯ `apps.list` (returns [] — auto-discovery is v0.3) |
+| Processes | ✓ `process.list`, ✓ `process.get`, ✓ `process.kill`, ✓ `process.logs` (offset-based polling) |
+| Prefix tweaks | ✓ `env.set`, ✓ `env.get`, ✓ `dll.override`, ✓ `winetricks.run` |
 
 Planned (land as the underlying packages get bodies):
 
 | Surface | Tools |
 |---|---|
 | Bottles | `bottles.clone` |
-| Apps | `apps.install`, `apps.list`, `apps.launch`, `apps.uninstall` |
-| Processes | `processes.list`, `process.kill`, `process.logs` (streaming) |
-| Prefix | `winetricks.run`, `registry.get`/`set`, `env.set`, `dll.override` |
+| Apps | `apps.uninstall` |
+| Prefix | `registry.get`/`set` |
 | Diagnostics | `logs.tail`, `logs.search`, `bottle.inspect` |
 | History | `undo`, `redo` — every prefix mutation reversible |
 
-The agent-driven debugging story works like this: Claude reads `process.logs` to spot a missing DLL, runs `winetricks.run d3dx9`, reties `apps.launch`. No human Googling. That loop is the whole product.
+The agent debug loop (the marquee feature) is complete: Claude reads `process.logs`, identifies the issue, calls `env.set` / `dll.override` / `winetricks.run` to fix, retries via `apps.launch`. Both halves — diagnose AND repair — are wired and verified end-to-end via real JSON-RPC.
 
 ## Cross-cutting events
 

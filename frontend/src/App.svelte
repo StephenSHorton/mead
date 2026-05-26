@@ -8,6 +8,7 @@
     DeleteBottle,
   } from '../wailsjs/go/main/App.js'
   import type { main } from '../wailsjs/go/models'
+  import BottleDetail from './lib/BottleDetail.svelte'
 
   let port: number | null = null
   let tokenShort: string = ''
@@ -23,6 +24,22 @@
   let confirmId: string | null = null
   let deletingId: string | null = null
   let deleteError = ''
+
+  let expandedId: string | null = null
+
+  function toggleExpand(id: string) {
+    // Collapse if the user clicks the row that's already open; otherwise switch focus.
+    expandedId = expandedId === id ? null : id
+    // Cancelling delete-confirm when toggling avoids a stale confirm prompt across modes.
+    if (confirmId && confirmId !== id) confirmId = null
+  }
+
+  function onRowKey(e: KeyboardEvent, id: string) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      toggleExpand(id)
+    }
+  }
 
   onMount(async () => {
     port = await BridgePort()
@@ -81,6 +98,7 @@
     try {
       await DeleteBottle(id)
       confirmId = null
+      if (expandedId === id) expandedId = null
       await refresh()
     } catch (err: any) {
       deleteError = typeof err === 'string' ? err : err?.message ?? String(err)
@@ -156,35 +174,64 @@
     {:else}
       <ul class="bottle-list">
         {#each bottles as b (b.id)}
-          <li class="bottle-row" class:confirming={confirmId === b.id}>
-            <div class="bottle-main">
-              <span class="name">{b.name}</span>
-              <span class="meta">
-                {#if b.wine_version}<span class="wine">{b.wine_version}</span>{/if}
-                {#if b.created_at}<span class="date">{fmtDate(b.created_at)}</span>{/if}
-              </span>
+          <li
+            class="bottle-row"
+            class:confirming={confirmId === b.id}
+            class:expanded={expandedId === b.id}
+          >
+            <div
+              class="bottle-main"
+              role="button"
+              tabindex="0"
+              aria-expanded={expandedId === b.id}
+              on:click={() => toggleExpand(b.id)}
+              on:keydown={(e) => onRowKey(e, b.id)}
+            >
+              <span class="caret" aria-hidden="true">{expandedId === b.id ? '▾' : '▸'}</span>
+              <div class="bottle-text">
+                <span class="name">{b.name}</span>
+                <span class="meta">
+                  {#if b.wine_version}<span class="wine">{b.wine_version}</span>{/if}
+                  {#if b.created_at}<span class="date">{fmtDate(b.created_at)}</span>{/if}
+                </span>
+              </div>
             </div>
             <div class="bottle-actions">
               {#if confirmId === b.id}
                 <span class="confirm-text">Delete this bottle?</span>
                 <button
                   class="btn-danger"
-                  on:click={() => confirmDelete(b.id)}
+                  on:click|stopPropagation={() => confirmDelete(b.id)}
                   disabled={deletingId === b.id}
                 >
                   {deletingId === b.id ? 'Deleting…' : 'Delete'}
                 </button>
-                <button class="btn-ghost" on:click={cancelDelete} disabled={deletingId === b.id}>
+                <button
+                  class="btn-ghost"
+                  on:click|stopPropagation={cancelDelete}
+                  disabled={deletingId === b.id}
+                >
                   Cancel
                 </button>
               {:else}
-                <button class="btn-delete" on:click={() => askDelete(b.id)} title="Delete bottle">
+                <button
+                  class="btn-delete"
+                  on:click|stopPropagation={() => askDelete(b.id)}
+                  title="Delete bottle"
+                >
                   Delete
                 </button>
               {/if}
             </div>
             {#if confirmId === b.id && deleteError}
               <p class="error row-error">{deleteError}</p>
+            {/if}
+            {#if expandedId === b.id}
+              <div class="bottle-detail-wrap">
+                {#key b.id}
+                  <BottleDetail bottle={b} />
+                {/key}
+              </div>
             {/if}
           </li>
         {/each}
@@ -409,9 +456,61 @@
 
   .bottle-main {
     display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    flex: 1;
+    background: transparent;
+    border: none;
+    padding: 0.1rem 0.2rem;
+    margin: -0.1rem -0.2rem;
+    border-radius: 4px;
+    cursor: pointer;
+    color: inherit;
+    text-align: left;
+    transition: background 120ms ease;
+  }
+
+  .bottle-main:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .bottle-main:focus-visible {
+    outline: none;
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+  }
+
+  .bottle-text {
+    display: flex;
     flex-direction: column;
     gap: 0.15rem;
     min-width: 0;
+  }
+
+  .caret {
+    color: #6b7480;
+    font-size: 0.75rem;
+    width: 0.85rem;
+    text-align: center;
+  }
+
+  .bottle-row.expanded {
+    background: rgba(255, 255, 255, 0.025);
+    border-radius: 6px;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
+  .bottle-row.expanded .caret {
+    color: #9aa3b1;
+  }
+
+  .bottle-detail-wrap {
+    flex-basis: 100%;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
   }
 
   .name {
