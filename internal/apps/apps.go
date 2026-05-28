@@ -98,7 +98,13 @@ func (m *Manager) Install(ctx context.Context, bottleID, installerPath string, e
 // Absolute exePaths are also accepted — they're passed through as-is
 // (the agent might want to launch a host binary from inside the
 // bottle, e.g. for diagnostics).
-func (m *Manager) Launch(ctx context.Context, bottleID, exePath string) (*runner.Process, error) {
+//
+// extraArgs are passed to the launched program after the exe path,
+// mirroring Install's extraArgs. Common uses: Chromium/CEF flags
+// (--single-process, --in-process-gpu) for apps like Battle.net, or
+// per-game launch options — passing them shouldn't require the
+// apps.install-with-an-already-installed-exe hack.
+func (m *Manager) Launch(ctx context.Context, bottleID, exePath string, extraArgs ...string) (*runner.Process, error) {
 	if strings.TrimSpace(exePath) == "" {
 		return nil, ErrExePathRequired
 	}
@@ -110,7 +116,8 @@ func (m *Manager) Launch(ctx context.Context, bottleID, exePath string) (*runner
 		}
 		resolved = filepath.Join(prefix, "drive_c", exePath)
 	}
-	spec, err := m.specForBottle(bottleID, []string{resolved})
+	args := append([]string{resolved}, extraArgs...)
+	spec, err := m.specForBottle(bottleID, args)
 	if err != nil {
 		return nil, err
 	}
