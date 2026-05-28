@@ -6,12 +6,18 @@
 //
 //  1. MEAD_WINE_PATH env var (full path to a `wine` / `wine64` binary).
 //  2. The bundled GPTK Wine at <app>/Contents/Resources/wine/bin/wine64.
-//  3. $(brew --prefix game-porting-toolkit)/bin/wine64 if Homebrew is
-//     installed and the formula is present.
-//  4. PATH lookup of `wine64`, then `wine`.
+//  3. The gcenx "game-porting-toolkit" Homebrew *cask*, which installs a
+//     ready-to-run GPTK Wine into "Game Porting Toolkit.app" under
+//     /Applications (or ~/Applications).
+//  4. $(brew --prefix game-porting-toolkit)/bin/wine64 — the Apple
+//     *formula*, if Homebrew is installed and it's present.
+//  5. PATH lookup of `wine64`, then `wine`.
 //
-// v0.1 ships bundled GPTK; the Homebrew + PATH fallbacks exist so
+// v0.1 ships bundled GPTK; the cask + Homebrew + PATH fallbacks exist so
 // developers without the bundle in their build tree can still iterate.
+// The cask (step 3) is the GPTK Mead is designed to run against, so a
+// user who `brew install --cask gcenx/wine/game-porting-toolkit` is
+// auto-detected without ever setting MEAD_WINE_PATH.
 // This package does NOT spawn Wine for actual workloads — see runner.
 // It DOES shell `wine --version` to populate Locator.Version(), because
 // the version string is metadata-of-the-locator, not a unit of work.
@@ -43,26 +49,61 @@ type Locator struct {
 	// Hooks. Tests override these; production paths use the defaults
 	// initialized in New(). Keeping them as fields rather than package
 	// vars means parallel tests don't trample each other.
-	lookupEnv  func(string) string
-	stat       func(string) error
-	lookPath   func(string) (string, error)
-	executable func() (string, error)
-	brewPrefix func(formula string) (string, error)
-	runCommand func(name string, args ...string) ([]byte, error)
+	lookupEnv   func(string) string
+	stat        func(string) error
+	lookPath    func(string) (string, error)
+	executable  func() (string, error)
+	userHomeDir func() (string, error)
+	brewPrefix  func(formula string) (string, error)
+	runCommand  func(name string, args ...string) ([]byte, error)
+
+	// appDirs, when set (appDirsSet == true), overrides the directories
+	// searched for the gcenx GPTK cask's "Game Porting Toolkit.app".
+	// Default (unset) is /Applications + ~/Applications. See WithAppDirs.
+	appDirs    []string
+	appDirsSet bool
 }
 
-// New returns an unconfigured Locator whose hooks use the real OS.
-// The first Path() call performs resolution and caches the result.
-func New() *Locator {
-	return &Locator{
-		lookupEnv:  os.Getenv,
-		stat:       statErr,
-		lookPath:   exec.LookPath,
-		executable: os.Executable,
-		brewPrefix: brewPrefix,
-		runCommand: runCommand,
+// Option configures a Locator at construction time.
+type Option func(*Locator)
+
+// WithAppDirs overrides the application directories searched for the
+// gcenx "game-porting-toolkit" cask (default: /Applications and
+// ~/Applications). Pass it to point Mead at a non-standard cask install
+// location; pass it with no dirs to disable cask detection entirely
+// (used by tests that need a deterministic "no wine on this host" state
+// regardless of what's installed in /Applications).
+func WithAppDirs(dirs ...string) Option {
+	return func(l *Locator) {
+		l.appDirs = dirs
+		l.appDirsSet = true
 	}
 }
+
+// New returns a Locator whose hooks use the real OS, configured by any
+// supplied options. The first Path() call performs resolution and
+// caches the result.
+func New(opts ...Option) *Locator {
+	l := &Locator{
+		lookupEnv:   os.Getenv,
+		stat:        statErr,
+		lookPath:    exec.LookPath,
+		executable:  os.Executable,
+		userHomeDir: os.UserHomeDir,
+		brewPrefix:  brewPrefix,
+		runCommand:  runCommand,
+	}
+	for _, opt := range opts {
+		opt(l)
+	}
+	return l
+}
+
+// gptkCaskAppRelPath is where the gcenx "game-porting-toolkit" Homebrew
+// cask drops the wine64 binary inside the installed .app bundle. Joined
+// onto an application directory (/Applications or ~/Applications) to
+// form a full candidate path.
+const gptkCaskAppRelPath = "Game Porting Toolkit.app/Contents/Resources/wine/bin/wine64"
 
 // Path returns the absolute path to the Wine binary Mead will spawn, or
 // ErrWineNotFound (wrapped with the candidates that were tried) if no
@@ -142,15 +183,33 @@ func (l *Locator) resolve() (string, error) {
 		}
 	}
 
-	// 3. Homebrew GPTK. Shell out only when reachable — `brew` may not
-	// be installed.
+	// 3. gcenx "game-porting-toolkit" Homebrew cask. Unlike the Apple
+	// formula (step 4), the cask installs a ready-to-run GPTK Wine into
+	// an app bundle under /Applications (the Homebrew default) or
+	// ~/Applications. This is the GPTK Mead is designed to run against,
+	// so prefer it over the formula — a plain stat, no shell-out.
+	caskDirs := l.appDirs
+	if !l.appDirsSet {
+		caskDirs = []string{"/Applications"}
+		if home, err := l.userHomeDir(); err == nil && home != "" {
+			caskDirs = append(caskDirs, filepath.Join(home, "Applications"))
+		}
+	}
+	for _, dir := range caskDirs {
+		if p, ok := check(filepath.Join(dir, gptkCaskAppRelPath)); ok {
+			return p, nil
+		}
+	}
+
+	// 4. Homebrew GPTK formula. Shell out only when reachable — `brew`
+	// may not be installed.
 	if prefix, err := l.brewPrefix("game-porting-toolkit"); err == nil && prefix != "" {
 		if p, ok := check(filepath.Join(prefix, "bin", "wine64")); ok {
 			return p, nil
 		}
 	}
 
-	// 4. PATH lookup. wine64 first (matches the 64-bit-only Apple
+	// 5. PATH lookup. wine64 first (matches the 64-bit-only Apple
 	// Silicon reality), then wine as fallback for older installs.
 	for _, name := range []string{"wine64", "wine"} {
 		p, err := l.lookPath(name)

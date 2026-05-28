@@ -176,7 +176,14 @@ func TestCreate_FailsWhenWineNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	m := New(s, wine.New(), runner.New())
+	// Neutralize every wine-resolution source so this stays deterministic
+	// on a dev box that has GPTK installed: MEAD_WINE_PATH points at a
+	// missing path (step 1); the empty PATH means `brew` can't be found so
+	// the formula lookup is skipped (step 4) and `wine64`/`wine` miss
+	// (step 5); the running test binary isn't an .app bundle (step 2); and
+	// WithAppDirs() (step 3) disables gcenx-cask detection, which is the
+	// one source that otherwise hits a real absolute path in /Applications.
+	m := New(s, wine.New(wine.WithAppDirs()), runner.New())
 
 	_, err = m.Create(context.Background(), "Anything")
 	if err == nil {
