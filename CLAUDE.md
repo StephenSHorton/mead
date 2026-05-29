@@ -53,7 +53,7 @@ Single Wails v2 executable. Go owns the system layer (Wine processes, bottle fil
 - `internal/meadcore` — the app singleton. `Core` owns the four subsystems below; `RegisterAll(b, c)` in `handlers.go` is the **single registration point** for every MCP method. Adding a new MCP tool means: write `handle<Foo>`, add `reg("foo.bar", handleFoo)` to `RegisterAll`, and add the matching method to the underlying manager.
 - `internal/bridge` — wire transport only (JSON-RPC 2.0 over NDJSON on 127.0.0.1, ephemeral port, per-pid lockfile, token auth on `params._token`). Ported from wc3-forge, parameterized via `bridge.Config{AppName}` so it carries no Mead-specific assumptions. Lockfile dir defaults to `$HOME/.mead/mcp/`, overridable via `MEAD_MCP_LOCK_DIR`.
 - `internal/bottles` — bottle lifecycle (create, list, get, delete). Composes `store` (metadata persistence), `wine` (binary location), and `runner` (process spawning for `wineboot` etc.). Does NOT own wire transport or directly call into Wine itself.
-- `internal/wine` — locates the Wine binary, reports its version. Resolution order: `MEAD_WINE_PATH` env, bundled GPTK at `<app>/Contents/Resources/wine/bin/wine64`, Homebrew `game-porting-toolkit`, PATH lookup.
+- `internal/wine` — locates the Wine binary, reports its version. Resolution order: `MEAD_WINE_PATH` env, bundled GPTK at `<app>/Contents/Resources/wine/bin/wine64`, the gcenx `game-porting-toolkit` Homebrew **cask** (`/Applications/Game Porting Toolkit.app/...` or `~/Applications`), the Apple `game-porting-toolkit` Homebrew **formula**, PATH lookup.
 - `internal/runner` — process supervisor. Spawns Wine processes against a bottle, captures stdout/stderr into per-bottle log files, tracks PIDs for kill/list, emits events for both the GUI and MCP. Every operation that mutates the user environment ultimately goes through Runner — centralizing logging and the agent's `process_logs` / `process_kill` surface.
 - `internal/store` — file-backed persistence under `$HOME/Library/Application Support/Mead/`. Bottle metadata, app shortcuts, install history, env overrides.
 
@@ -72,7 +72,7 @@ Single registration point: `meadcore.RegisterAll`. Naming convention: `<noun>.<v
 | Surface | Tools (✓ implemented, ◯ stub-returning) |
 |---|---|
 | Liveness | ✓ `bridge.ping`, ✓ `bridge.version` |
-| Wine | ✓ `wine.version` (resolves env / bundled GPTK / Homebrew / PATH) |
+| Wine | ✓ `wine.version` (resolves env / bundled GPTK / gcenx cask / Homebrew formula / PATH) |
 | Bottles | ✓ `bottles.list`, ✓ `bottles.create`, ✓ `bottles.get`, ✓ `bottles.delete` |
 | Apps | ✓ `apps.install`, ✓ `apps.launch`, ◯ `apps.list` (returns [] — auto-discovery is v0.3) |
 | Processes | ✓ `process.list`, ✓ `process.get`, ✓ `process.kill`, ✓ `process.logs` (offset-based polling) |

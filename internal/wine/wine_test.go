@@ -17,15 +17,17 @@ import (
 // Default ALL hooks to "miss" — tests that care about a layer override
 // just that layer.
 type stubs struct {
-	env         map[string]string
-	exists      map[string]bool // path → exists?
-	pathLookup  map[string]string
-	exe         string
-	exeErr      error
-	brewPath    string
-	brewErr     error
-	runOutput   []byte
-	runErr      error
+	env        map[string]string
+	exists     map[string]bool // path → exists?
+	pathLookup map[string]string
+	exe        string
+	exeErr     error
+	home       string
+	homeErr    error
+	brewPath   string
+	brewErr    error
+	runOutput  []byte
+	runErr     error
 }
 
 func newLocatorWithStubs(s stubs) *Locator {
@@ -50,6 +52,9 @@ func newLocatorWithStubs(s stubs) *Locator {
 	}
 	l.executable = func() (string, error) {
 		return s.exe, s.exeErr
+	}
+	l.userHomeDir = func() (string, error) {
+		return s.home, s.homeErr
 	}
 	l.brewPrefix = func(formula string) (string, error) {
 		return s.brewPath, s.brewErr
@@ -99,6 +104,132 @@ func TestPath_BundledGPTKBeatsBrewAndPath(t *testing.T) {
 	}
 	if got != bundlePath {
 		t.Errorf("Path = %q; want bundled %q", got, bundlePath)
+	}
+}
+
+func TestPath_GPTKCaskDetected(t *testing.T) {
+	// No env override, no bundled GPTK: the gcenx cask installed to
+	// /Applications should be auto-detected (the project's intended
+	// default wine).
+	cask := filepath.Join("/Applications", gptkCaskAppRelPath)
+	l := newLocatorWithStubs(stubs{
+		exists:  map[string]bool{cask: true},
+		exe:     "/missing/Mead.app/Contents/MacOS/Mead", // bundle won't stat
+		brewErr: errors.New("brew not installed"),
+	})
+
+	got, err := l.Path()
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if got != cask {
+		t.Errorf("Path = %q; want cask %q", got, cask)
+	}
+}
+
+func TestPath_GPTKCaskInHomeApplications(t *testing.T) {
+	// When the cask is installed to ~/Applications instead of
+	// /Applications, the home-dir candidate finds it.
+	home := "/Users/me"
+	homeCask := filepath.Join(home, "Applications", gptkCaskAppRelPath)
+	l := newLocatorWithStubs(stubs{
+		exists:  map[string]bool{homeCask: true},
+		exe:     "/missing",
+		home:    home,
+		brewErr: errors.New("brew not installed"),
+	})
+
+	got, err := l.Path()
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if got != homeCask {
+		t.Errorf("Path = %q; want home cask %q", got, homeCask)
+	}
+}
+
+func TestPath_BundledBeatsCask(t *testing.T) {
+	// The bundled GPTK (step 2) must win over the cask (step 3).
+	bundlePath := "/Users/me/Mead.app/Contents/Resources/wine/bin/wine64"
+	cask := filepath.Join("/Applications", gptkCaskAppRelPath)
+	l := newLocatorWithStubs(stubs{
+		exists: map[string]bool{bundlePath: true, cask: true},
+		exe:    "/Users/me/Mead.app/Contents/MacOS/Mead",
+	})
+
+	got, err := l.Path()
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if got != bundlePath {
+		t.Errorf("Path = %q; want bundled %q (bundle must beat cask)", got, bundlePath)
+	}
+}
+
+func TestPath_CaskBeatsBrewFormula(t *testing.T) {
+	// The cask (step 3) must win over the Apple Homebrew formula (step 4).
+	cask := filepath.Join("/Applications", gptkCaskAppRelPath)
+	brewBin := "/opt/homebrew/opt/game-porting-toolkit/bin/wine64"
+	l := newLocatorWithStubs(stubs{
+		exists:   map[string]bool{cask: true, brewBin: true},
+		exe:      "/missing",
+		brewPath: "/opt/homebrew/opt/game-porting-toolkit",
+	})
+
+	got, err := l.Path()
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if got != cask {
+		t.Errorf("Path = %q; want cask %q (cask must beat brew formula)", got, cask)
+	}
+}
+
+func TestWithAppDirs_DisablesCaskDetection(t *testing.T) {
+	// WithAppDirs() with no args must make the cask invisible even when it
+	// exists — this is the seam bottles_test relies on for determinism, so
+	// prove it isn't a no-op.
+	cask := filepath.Join("/Applications", gptkCaskAppRelPath)
+	l := New(WithAppDirs())
+	l.lookupEnv = func(string) string { return "" }
+	l.stat = func(p string) error {
+		if p == cask {
+			return nil // cask exists on disk...
+		}
+		return os.ErrNotExist
+	}
+	l.lookPath = func(string) (string, error) { return "", errors.New("nope") }
+	l.executable = func() (string, error) { return "/missing", nil }
+	l.brewPrefix = func(string) (string, error) { return "", errors.New("no brew") }
+
+	if _, err := l.Path(); !errors.Is(err, ErrWineNotFound) {
+		t.Errorf("WithAppDirs() should suppress the cask; got %v", err)
+	}
+}
+
+func TestWithAppDirs_OverridesSearchDir(t *testing.T) {
+	// WithAppDirs("/custom") must search the custom dir instead of the
+	// defaults — proves the override path, not just the disable path.
+	customCask := filepath.Join("/custom", gptkCaskAppRelPath)
+	defaultCask := filepath.Join("/Applications", gptkCaskAppRelPath)
+	l := New(WithAppDirs("/custom"))
+	l.lookupEnv = func(string) string { return "" }
+	l.stat = func(p string) error {
+		if p == customCask || p == defaultCask {
+			return nil
+		}
+		return os.ErrNotExist
+	}
+	l.lookPath = func(string) (string, error) { return "", errors.New("nope") }
+	l.executable = func() (string, error) { return "/missing", nil }
+	l.brewPrefix = func(string) (string, error) { return "", errors.New("no brew") }
+
+	got, err := l.Path()
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if got != customCask {
+		t.Errorf("Path = %q; want custom cask %q (default /Applications must be skipped)", got, customCask)
 	}
 }
 
@@ -157,8 +288,13 @@ func TestPath_AllMissReturnsErrWineNotFound(t *testing.T) {
 	// render an actionable hint.
 	msg := err.Error()
 	// The error message should mention wine64 + wine being checked on
-	// PATH and report both as "not on PATH" when lookPath fails.
-	for _, want := range []string{"wine64 (not on PATH)", "wine (not on PATH)"} {
+	// PATH and report both as "not on PATH" when lookPath fails, and the
+	// gcenx cask candidate so the actionable hint covers the GPTK default.
+	for _, want := range []string{
+		"wine64 (not on PATH)",
+		"wine (not on PATH)",
+		filepath.Join("/Applications", gptkCaskAppRelPath),
+	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error message %q missing %q", msg, want)
 		}
