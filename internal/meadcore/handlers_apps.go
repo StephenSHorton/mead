@@ -43,6 +43,10 @@ func (c *Core) handleAppsInstall(raw json.RawMessage) (any, error) {
 type appsLaunchParams struct {
 	BottleID string `json:"bottle_id"`
 	ExePath  string `json:"exe_path"`
+	// Args are extra command-line arguments passed to the launched
+	// program after its path — mirrors apps.install's args. Use these
+	// for Chromium/CEF flags or per-game launch options.
+	Args []string `json:"args"`
 }
 
 func (c *Core) handleAppsLaunch(raw json.RawMessage) (any, error) {
@@ -53,7 +57,7 @@ func (c *Core) handleAppsLaunch(raw json.RawMessage) (any, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
-	proc, err := c.Apps.Launch(context.Background(), p.BottleID, p.ExePath)
+	proc, err := c.Apps.Launch(context.Background(), p.BottleID, p.ExePath, p.Args...)
 	if err != nil {
 		return nil, err
 	}

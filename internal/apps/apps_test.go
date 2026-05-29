@@ -178,6 +178,30 @@ func TestLaunch_EmptyPathRejected(t *testing.T) {
 	}
 }
 
+// TestLaunch_PassesExtraArgs locks in that Launch forwards extra args
+// after the exe path, mirroring Install. This is what lets the agent
+// pass Chromium/CEF flags to an installed app without the
+// apps.install-with-an-already-installed-exe workaround.
+func TestLaunch_PassesExtraArgs(t *testing.T) {
+	m, _, bottleID := newTestStack(t)
+	abs := "/Applications/Some.app/Contents/MacOS/Some"
+	proc, err := m.Launch(context.Background(), bottleID, abs, "--single-process", "--in-process-gpu")
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	<-proc.Done()
+	data, err := os.ReadFile(proc.LogPath())
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	// fake-wine echoes "ran $@" — exe path followed by the extra args
+	// in order.
+	want := "ran " + abs + " --single-process --in-process-gpu"
+	if !strings.Contains(string(data), want) {
+		t.Errorf("Launch didn't forward extra args: %q (expected %q in argv)", data, want)
+	}
+}
+
 func TestList_EmptyForNow(t *testing.T) {
 	m, _, bottleID := newTestStack(t)
 	apps, err := m.List(bottleID)
