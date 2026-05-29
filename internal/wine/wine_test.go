@@ -394,6 +394,9 @@ func TestPreamble_D3DMetalWineSetsDyldAndOverrides(t *testing.T) {
 	if env["ROSETTA_ADVERTISE_AVX"] != "1" {
 		t.Errorf("ROSETTA_ADVERTISE_AVX = %q; want 1", env["ROSETTA_ADVERTISE_AVX"])
 	}
+	if env["WINEDEBUG"] != "fixme-all" {
+		t.Errorf("WINEDEBUG = %q; want fixme-all", env["WINEDEBUG"])
+	}
 }
 
 func TestPreamble_PlainWineReturnsEmpty(t *testing.T) {

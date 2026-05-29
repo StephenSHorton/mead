@@ -149,14 +149,24 @@ func (r *Runner) Spawn(ctx context.Context, spec Spec) (*Process, error) {
 		return nil, fmt.Errorf("create log file: %w", err)
 	}
 
+	// Bound the on-disk log. A chatty process under a verbose WINEDEBUG
+	// can emit gigabytes (a single Battle.net launch was observed
+	// writing a 3.5 GB log of fixme spam, enough to threaten the disk
+	// and stall the very GPU init it was logging). The head of the log
+	// holds the actionable output; past the cap we drop and leave a
+	// one-time marker. Stdout==Stderr is the SAME writer, so exec
+	// funnels both streams through a single output copier — the capped
+	// writer never sees concurrent writes.
+	logW := &cappedWriter{w: f, cap: maxSpawnLogBytes}
+
 	// CommandContext so an external cancel kills the spawned process.
 	// We also pre-build a derived context whose cancel we keep so
 	// Process.Kill() can fire it.
 	derived, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(derived, spec.Argv[0], spec.Argv[1:]...)
 	cmd.Env = composeEnv(os.Environ(), spec.Env)
-	cmd.Stdout = f
-	cmd.Stderr = f
+	cmd.Stdout = logW
+	cmd.Stderr = logW
 	// SysProcAttr.Setpgid puts the child in its own process group so
 	// Kill() can target the whole group with a single signal. Useful
 	// when a Wine launch spawns helper processes (wineserver et al).
@@ -392,3 +402,40 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 }
 
 func (c *cappedBuffer) Bytes() []byte { return c.b.Bytes() }
+
+// maxSpawnLogBytes bounds a detached process's on-disk log. 64 MiB is
+// far more than any real diagnostic needs but stops a runaway log from
+// filling the disk.
+const maxSpawnLogBytes = 64 << 20
+
+// cappedWriter forwards to w until cap bytes have been written, then
+// drops further data after emitting a one-time truncation marker. Used
+// to bound the detached Spawn log file. NOT safe for concurrent use —
+// the single exec output copier (Stdout==Stderr) is the only writer.
+type cappedWriter struct {
+	w         io.Writer
+	cap       int
+	written   int
+	truncated bool
+}
+
+func (c *cappedWriter) Write(p []byte) (int, error) {
+	if c.written >= c.cap {
+		return len(p), nil // already full — drop, report consumed
+	}
+	if c.written+len(p) > c.cap {
+		n, err := c.w.Write(p[:c.cap-c.written])
+		c.written += n
+		if !c.truncated {
+			c.truncated = true
+			_, _ = io.WriteString(c.w, "\n[mead: log truncated at 64 MiB cap; further output dropped]\n")
+		}
+		if err != nil {
+			return n, err
+		}
+		return len(p), nil // dropped the tail, but the write "succeeded"
+	}
+	n, err := c.w.Write(p)
+	c.written += n
+	return n, err
+}

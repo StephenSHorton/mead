@@ -171,6 +171,11 @@ func (l *Locator) Version() (string, error) {
 //     fresh prefix doesn't stall on a Mono/Gecko install prompt.
 //   - ROSETTA_ADVERTISE_AVX: makes Rosetta advertise AVX so titles that
 //     probe for it (Battle.net, many D3D games) take their fast path.
+//   - WINEDEBUG=fixme-all: silences the noisy fixme channel. A CEF app
+//     (Battle.net) under the default WINEDEBUG floods the log with
+//     gigabytes of fixme:msvcp / fixme:d3dkmt — enough to threaten the
+//     disk and stall GPU init. fixme-all keeps err+warn, which is what
+//     the agent debug loop actually reads. Overridable per bottle.
 //
 // Returns an empty map (never nil — callers can range freely) for a
 // plain Wine that needs no preamble, and propagates a Path() error.
@@ -201,6 +206,7 @@ func preambleFor(winePath string, stat func(string) error) map[string]string {
 	env["DYLD_FALLBACK_LIBRARY_PATH"] = external + ":/usr/local/lib:/usr/lib"
 	env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d;mscoree=d;mshtml=d"
 	env["ROSETTA_ADVERTISE_AVX"] = "1"
+	env["WINEDEBUG"] = "fixme-all"
 	return env
 }
 
