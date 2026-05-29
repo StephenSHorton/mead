@@ -372,6 +372,57 @@ func TestVersion_Cached(t *testing.T) {
 	}
 }
 
+func TestPreamble_D3DMetalWineSetsDyldAndOverrides(t *testing.T) {
+	winePath := "/Applications/D4Mac.app/Contents/SharedSupport/Wine/bin/wine"
+	framework := "/Applications/D4Mac.app/Contents/SharedSupport/Wine/lib/external/D3DMetal.framework"
+	l := newLocatorWithStubs(stubs{
+		env:    map[string]string{"MEAD_WINE_PATH": winePath},
+		exists: map[string]bool{winePath: true, framework: true},
+	})
+
+	env, err := l.Preamble()
+	if err != nil {
+		t.Fatalf("Preamble: %v", err)
+	}
+	wantDyld := "/Applications/D4Mac.app/Contents/SharedSupport/Wine/lib/external:/usr/local/lib:/usr/lib"
+	if env["DYLD_FALLBACK_LIBRARY_PATH"] != wantDyld {
+		t.Errorf("DYLD_FALLBACK_LIBRARY_PATH = %q; want %q", env["DYLD_FALLBACK_LIBRARY_PATH"], wantDyld)
+	}
+	if env["WINEDLLOVERRIDES"] != "winemenubuilder.exe=d;mscoree=d;mshtml=d" {
+		t.Errorf("WINEDLLOVERRIDES = %q", env["WINEDLLOVERRIDES"])
+	}
+	if env["ROSETTA_ADVERTISE_AVX"] != "1" {
+		t.Errorf("ROSETTA_ADVERTISE_AVX = %q; want 1", env["ROSETTA_ADVERTISE_AVX"])
+	}
+}
+
+func TestPreamble_PlainWineReturnsEmpty(t *testing.T) {
+	// A wine with no D3DMetal.framework alongside it needs no preamble.
+	winePath := "/usr/local/bin/wine64"
+	l := newLocatorWithStubs(stubs{
+		env:    map[string]string{"MEAD_WINE_PATH": winePath},
+		exists: map[string]bool{winePath: true}, // framework absent
+	})
+
+	env, err := l.Preamble()
+	if err != nil {
+		t.Fatalf("Preamble: %v", err)
+	}
+	if len(env) != 0 {
+		t.Errorf("expected empty preamble for plain wine, got %v", env)
+	}
+}
+
+func TestPreamble_PropagatesPathError(t *testing.T) {
+	l := newLocatorWithStubs(stubs{
+		exe:     "/missing",
+		brewErr: errors.New("brew not installed"),
+	})
+	if _, err := l.Preamble(); !errors.Is(err, ErrWineNotFound) {
+		t.Errorf("Preamble: expected ErrWineNotFound, got %v", err)
+	}
+}
+
 func TestPath_BundleLayoutResolution(t *testing.T) {
 	// Verify we look exactly at <bundle>/Contents/Resources/wine/bin/wine64
 	// when the running binary is at <bundle>/Contents/MacOS/<binary>.
