@@ -135,3 +135,29 @@ func TestComposeEnv_OverridesWin(t *testing.T) {
 		t.Errorf("BAR=%q; want new", want["BAR"])
 	}
 }
+
+func TestCappedWriter_BoundsContentAndMarksTruncationOnce(t *testing.T) {
+	var sb strings.Builder
+	cw := &cappedWriter{w: &sb, cap: 100}
+	if n, err := cw.Write([]byte(strings.Repeat("x", 80))); err != nil || n != 80 {
+		t.Fatalf("first write: n=%d err=%v", n, err)
+	}
+	// Crosses the cap (80+40 > 100): 20 bytes land, the rest is dropped,
+	// but the write still reports the full length consumed so the
+	// upstream copier doesn't treat it as a short write / error.
+	if n, err := cw.Write([]byte(strings.Repeat("x", 40))); err != nil || n != 40 {
+		t.Errorf("crossing write: n=%d err=%v; want 40,nil", n, err)
+	}
+	// Fully past the cap — dropped, still reported consumed.
+	if n, _ := cw.Write([]byte(strings.Repeat("x", 1000))); n != 1000 {
+		t.Errorf("post-cap write reported %d; want 1000 consumed", n)
+	}
+	out := sb.String()
+	// 'x' never appears in the truncation marker, so this isolates content.
+	if c := strings.Count(out, "x"); c != 100 {
+		t.Errorf("content bytes = %d; want exactly the 100-byte cap", c)
+	}
+	if n := strings.Count(out, "truncated"); n != 1 {
+		t.Errorf("truncation marker count = %d; want exactly 1; out=%q", n, out)
+	}
+}
