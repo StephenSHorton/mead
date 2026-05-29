@@ -5,7 +5,7 @@
 // We use Svelte 5 module-level $state so any component can `import { ui }`
 // and read/mutate reactively.
 
-export type DetailTab = 'processes' | 'apps' | 'env' | 'dll' | 'winetricks'
+export type DetailTab = 'processes' | 'apps' | 'env' | 'dll' | 'winetricks' | 'registry'
 
 class UIStore {
   selectedBottleId = $state<string | null>(null)

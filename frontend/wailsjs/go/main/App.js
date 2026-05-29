@@ -10,6 +10,10 @@ export function BridgeTokenShort() {
   return window['go']['main']['App']['BridgeTokenShort']();
 }
 
+export function CloneBottle(arg1, arg2) {
+  return window['go']['main']['App']['CloneBottle'](arg1, arg2);
+}
+
 export function CreateBottle(arg1) {
   return window['go']['main']['App']['CreateBottle'](arg1);
 }
@@ -22,6 +26,10 @@ export function GetEnv(arg1) {
   return window['go']['main']['App']['GetEnv'](arg1);
 }
 
+export function GetRegistry(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetRegistry'](arg1, arg2, arg3);
+}
+
 export function InstallApp(arg1, arg2, arg3) {
   return window['go']['main']['App']['InstallApp'](arg1, arg2, arg3);
 }
@@ -30,8 +38,8 @@ export function KillProcess(arg1) {
   return window['go']['main']['App']['KillProcess'](arg1);
 }
 
-export function LaunchApp(arg1, arg2) {
-  return window['go']['main']['App']['LaunchApp'](arg1, arg2);
+export function LaunchApp(arg1, arg2, arg3) {
+  return window['go']['main']['App']['LaunchApp'](arg1, arg2, arg3);
 }
 
 export function ListBottles() {
@@ -56,4 +64,12 @@ export function SetDLLOverride(arg1, arg2, arg3) {
 
 export function SetEnv(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetEnv'](arg1, arg2, arg3);
+}
+
+export function SetRegistry(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SetRegistry'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function UninstallApp(arg1, arg2) {
+  return window['go']['main']['App']['UninstallApp'](arg1, arg2);
 }

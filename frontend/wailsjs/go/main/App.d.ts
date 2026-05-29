@@ -6,17 +6,21 @@ export function BridgePort():Promise<number>;
 
 export function BridgeTokenShort():Promise<string>;
 
+export function CloneBottle(arg1:string,arg2:string):Promise<main.BottleSummary>;
+
 export function CreateBottle(arg1:string):Promise<main.BottleSummary>;
 
 export function DeleteBottle(arg1:string):Promise<void>;
 
 export function GetEnv(arg1:string):Promise<Record<string, string>>;
 
+export function GetRegistry(arg1:string,arg2:string,arg3:string):Promise<main.RegistryQueryResult>;
+
 export function InstallApp(arg1:string,arg2:string,arg3:Array<string>):Promise<string>;
 
 export function KillProcess(arg1:string):Promise<void>;
 
-export function LaunchApp(arg1:string,arg2:string):Promise<string>;
+export function LaunchApp(arg1:string,arg2:string,arg3:Array<string>):Promise<string>;
 
 export function ListBottles():Promise<Array<main.BottleSummary>>;
 
@@ -29,3 +33,7 @@ export function RunWinetricks(arg1:string,arg2:string):Promise<string>;
 export function SetDLLOverride(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SetEnv(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SetRegistry(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;
+
+export function UninstallApp(arg1:string,arg2:string):Promise<string>;

@@ -168,6 +168,26 @@ func (a *App) CreateBottle(name string) (*BottleSummary, error) {
 	}, nil
 }
 
+// CloneBottle duplicates an existing bottle (prefix + metadata) into a
+// new bottle with a fresh id and the given (unique) name. Blocking, but
+// the prefix copy is clonefile-backed (near-instant on APFS). Mirrors
+// the bottles.clone MCP method.
+func (a *App) CloneBottle(sourceID, name string) (*BottleSummary, error) {
+	if a.core == nil || a.core.Bottles == nil {
+		return nil, errBottlesUnavailable
+	}
+	b, err := a.core.Bottles.Clone(a.ctx, sourceID, name)
+	if err != nil {
+		return nil, err
+	}
+	return &BottleSummary{
+		ID:          b.ID,
+		Name:        b.Name,
+		CreatedAt:   b.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		WineVersion: b.WineVersion,
+	}, nil
+}
+
 // DeleteBottle removes a bottle by id. Irreversible. The frontend is
 // expected to confirm with the user before calling.
 func (a *App) DeleteBottle(id string) error {
@@ -225,12 +245,29 @@ func (a *App) InstallApp(bottleID, installerPath string, extraArgs []string) (st
 
 // LaunchApp starts an already-installed app inside a bottle. exePath
 // is either absolute or relative to <prefix>/drive_c — same contract
-// as the apps.launch MCP method.
-func (a *App) LaunchApp(bottleID, exePath string) (string, error) {
+// as the apps.launch MCP method. extraArgs are passed after the exe
+// path (e.g. CEF flags like --in-process-gpu --use-gl=swiftshader).
+func (a *App) LaunchApp(bottleID, exePath string, extraArgs []string) (string, error) {
 	if a.core == nil || a.core.Apps == nil {
 		return "", errBottlesUnavailable
 	}
-	proc, err := a.core.Apps.Launch(a.ctx, bottleID, exePath)
+	proc, err := a.core.Apps.Launch(a.ctx, bottleID, exePath, extraArgs...)
+	if err != nil {
+		return "", err
+	}
+	return string(proc.ID()), nil
+}
+
+// UninstallApp runs `wine uninstaller --remove <key>` in the bottle and
+// returns the RunID to poll. key is an identifier from `wine uninstaller
+// --list` (an MSI product GUID or a plain registry subkey name). Mirrors
+// apps.uninstall — the returned run_id means removal STARTED, not that
+// it succeeded; the frontend should poll the logs and re-check.
+func (a *App) UninstallApp(bottleID, key string) (string, error) {
+	if a.core == nil || a.core.Apps == nil {
+		return "", errBottlesUnavailable
+	}
+	proc, err := a.core.Apps.Uninstall(a.ctx, bottleID, key)
 	if err != nil {
 		return "", err
 	}
@@ -359,4 +396,57 @@ func (a *App) RunWinetricks(bottleID, verb string) (string, error) {
 		return "", err
 	}
 	return string(proc.ID()), nil
+}
+
+// ---- Registry bindings ---------------------------------------------------
+// Surface registry.get / registry.set to the frontend. Same semantics as
+// the MCP methods: synchronous `wine reg query` / `reg add` against the
+// bottle's prefix.
+
+// RegistryValue mirrors registry.Value for the Wails binding generator
+// (which scans the main package, not internal/).
+type RegistryValue struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+	Data string `json:"data"`
+}
+
+// RegistryQueryResult mirrors registry.QueryResult: the echoed key path,
+// the key's values, and its immediate subkeys.
+type RegistryQueryResult struct {
+	Key     string          `json:"key"`
+	Values  []RegistryValue `json:"values"`
+	Subkeys []string        `json:"subkeys,omitempty"`
+}
+
+// GetRegistry reads a bottle's registry key — or one named value within
+// it when `value` is non-empty — via `wine reg query`. Mirrors
+// registry.get.
+func (a *App) GetRegistry(bottleID, key, value string) (*RegistryQueryResult, error) {
+	if a.core == nil || a.core.Registry == nil {
+		return nil, errBottlesUnavailable
+	}
+	res, err := a.core.Registry.Query(a.ctx, bottleID, key, value)
+	if err != nil {
+		return nil, err
+	}
+	out := &RegistryQueryResult{
+		Key:     res.Key,
+		Subkeys: res.Subkeys,
+		Values:  make([]RegistryValue, 0, len(res.Values)),
+	}
+	for _, v := range res.Values {
+		out.Values = append(out.Values, RegistryValue{Name: v.Name, Type: v.Type, Data: v.Data})
+	}
+	return out, nil
+}
+
+// SetRegistry writes a value into a bottle's registry via `wine reg add
+// … /f`. Empty `value` creates the key only; empty `regType` defaults to
+// REG_SZ. Mirrors registry.set.
+func (a *App) SetRegistry(bottleID, key, value, regType, data string) error {
+	if a.core == nil || a.core.Registry == nil {
+		return errBottlesUnavailable
+	}
+	return a.core.Registry.Set(a.ctx, bottleID, key, value, regType, data)
 }
