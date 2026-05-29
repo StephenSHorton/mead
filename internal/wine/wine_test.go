@@ -107,6 +107,82 @@ func TestPath_BundledGPTKBeatsBrewAndPath(t *testing.T) {
 	}
 }
 
+func TestPath_OwnedWineFoundByWalkUp(t *testing.T) {
+	// A build run in place (build/bin/mead.app/...) finds the Mead-owned
+	// wine at <repo>/scripts/wine/bin/wine by walking up from the binary.
+	exe := "/Users/me/projects/mead/build/bin/mead.app/Contents/MacOS/mead"
+	owned := "/Users/me/projects/mead/scripts/wine/bin/wine"
+	l := newLocatorWithStubs(stubs{
+		exists:  map[string]bool{owned: true},
+		exe:     exe,
+		brewErr: errors.New("brew not installed"),
+	})
+	got, err := l.Path()
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if got != owned {
+		t.Errorf("Path = %q; want owned %q", got, owned)
+	}
+}
+
+func TestPath_OwnedWineFoundInHomeProjects(t *testing.T) {
+	// Binary not under the repo (e.g. moved .app): fall back to the
+	// canonical ~/projects/mead checkout.
+	owned := "/Users/me/projects/mead/scripts/wine/bin/wine"
+	l := newLocatorWithStubs(stubs{
+		exists:  map[string]bool{owned: true},
+		exe:     "/Applications/Mead.app/Contents/MacOS/mead",
+		home:    "/Users/me",
+		brewErr: errors.New("brew not installed"),
+	})
+	got, err := l.Path()
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if got != owned {
+		t.Errorf("Path = %q; want owned %q", got, owned)
+	}
+}
+
+func TestPath_OwnedWineBeatsBundled(t *testing.T) {
+	// 1b (Mead-owned) is checked before 2 (bundled GPTK).
+	exe := "/Users/me/projects/mead/build/bin/mead.app/Contents/MacOS/mead"
+	owned := "/Users/me/projects/mead/scripts/wine/bin/wine"
+	bundled := "/Users/me/projects/mead/build/bin/mead.app/Contents/Resources/wine/bin/wine64"
+	l := newLocatorWithStubs(stubs{
+		exists:  map[string]bool{owned: true, bundled: true},
+		exe:     exe,
+		brewErr: errors.New("brew not installed"),
+	})
+	got, err := l.Path()
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if got != owned {
+		t.Errorf("Path = %q; want owned %q to beat bundled", got, owned)
+	}
+}
+
+func TestPath_EnvBeatsOwnedWine(t *testing.T) {
+	// MEAD_WINE_PATH (step 1) still wins over the owned-wine candidate (1b).
+	envPath := "/custom/wine"
+	owned := "/Users/me/projects/mead/scripts/wine/bin/wine"
+	l := newLocatorWithStubs(stubs{
+		env:    map[string]string{"MEAD_WINE_PATH": envPath},
+		exists: map[string]bool{envPath: true, owned: true},
+		exe:    "/Users/me/projects/mead/build/bin/mead.app/Contents/MacOS/mead",
+		home:   "/Users/me",
+	})
+	got, err := l.Path()
+	if err != nil {
+		t.Fatalf("Path: %v", err)
+	}
+	if got != envPath {
+		t.Errorf("Path = %q; want env %q", got, envPath)
+	}
+}
+
 func TestPath_GPTKCaskDetected(t *testing.T) {
 	// No env override, no bundled GPTK: the gcenx cask installed to
 	// /Applications should be auto-detected (the project's intended
