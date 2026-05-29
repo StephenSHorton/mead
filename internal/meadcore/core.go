@@ -15,6 +15,7 @@ import (
 
 	"github.com/StephenSHorton/mead/internal/apps"
 	"github.com/StephenSHorton/mead/internal/bottles"
+	"github.com/StephenSHorton/mead/internal/registry"
 	"github.com/StephenSHorton/mead/internal/runner"
 	"github.com/StephenSHorton/mead/internal/store"
 	"github.com/StephenSHorton/mead/internal/wine"
@@ -30,6 +31,7 @@ type Core struct {
 	Bottles    *bottles.Manager
 	Runner     *runner.Runner
 	Apps       *apps.Manager
+	Registry   *registry.Manager
 }
 
 // New constructs a fully-wired core. If the store can't be opened
@@ -73,6 +75,7 @@ func New() (*Core, error) {
 		Runner:     r,
 		Bottles:    bm,
 		Apps:       apps.New(s, bm, w, wt, r),
+		Registry:   registry.New(s, bm, w, r),
 	}, nil
 }
 
@@ -90,6 +93,14 @@ func (c *Core) requireBottles() error {
 func (c *Core) requireApps() error {
 	if c.Apps == nil {
 		return fmt.Errorf("apps unavailable: store failed to open at startup (see app log)")
+	}
+	return nil
+}
+
+// requireRegistry mirrors requireBottles for the registry subsystem.
+func (c *Core) requireRegistry() error {
+	if c.Registry == nil {
+		return fmt.Errorf("registry unavailable: store failed to open at startup (see app log)")
 	}
 	return nil
 }

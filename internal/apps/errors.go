@@ -18,3 +18,7 @@ var ErrWinetricksVerbRequired = errors.New("winetricks verb is required")
 // Manager was constructed without a winetricks.Locator (only useful
 // in tests where we don't always need the dep).
 var ErrWinetricksLocatorNotWired = errors.New("winetricks locator not wired")
+
+// ErrUninstallKeyRequired is returned by Uninstall when the supplied
+// uninstaller key (from `wine uninstaller --list`) is empty.
+var ErrUninstallKeyRequired = errors.New("uninstaller key is required (see `wine uninstaller --list`)")
