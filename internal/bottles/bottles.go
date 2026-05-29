@@ -37,10 +37,10 @@ type Bottle = store.Bottle
 // Manager is the entry point for bottle operations. Construct one per
 // process (the meadcore.Core singleton owns it).
 type Manager struct {
-	store   *store.Store
-	wine    *wine.Locator
-	runner  *runner.Runner
-	mu      sync.Mutex // serializes Create + Delete against each other
+	store  *store.Store
+	wine   *wine.Locator
+	runner *runner.Runner
+	mu     sync.Mutex // serializes Create/Clone/Delete/SetEnv against each other
 
 	// onChange, when set, is invoked after any successful mutation
 	// (Create, Delete, SetEnv). The host application wires this to a
@@ -176,6 +176,112 @@ func (m *Manager) Create(ctx context.Context, name string) (*Bottle, error) {
 		_ = m.store.DeleteBottle(id)
 		m.mu.Unlock()
 		return nil, fmt.Errorf("save bottle: %w", err)
+	}
+	m.mu.Unlock()
+	m.emit()
+	return b, nil
+}
+
+// Clone duplicates an existing bottle — its Wine prefix and metadata —
+// into a brand-new bottle with a fresh UUID and the given (unique)
+// display name. The prefix is copied with macOS clonefile semantics
+// (`cp -Rc`): on an APFS volume the copy is copy-on-write — near
+// instant and ~zero additional disk until the two prefixes diverge.
+// (`cp -Rc` falls back to a plain recursive copy when the destination
+// can't be cloned, e.g. a different or non-APFS volume.)
+//
+// The new bottle inherits the source's WineVersion and a DEEP COPY of
+// its env overrides; CreatedAt is stamped fresh. The source bottle is
+// left untouched.
+//
+// Holds m.mu for the duration so the name-uniqueness check stays honest
+// against concurrent Create/Clone, mirroring Create. On any failure the
+// partially-created destination is rolled back so the user never sees a
+// half-cloned bottle in the list.
+func (m *Manager) Clone(ctx context.Context, sourceID, name string) (*Bottle, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, ErrBottleNameRequired
+	}
+
+	m.mu.Lock()
+	taken, err := m.store.NameTaken(name)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("check name uniqueness: %w", err)
+	}
+	if taken {
+		m.mu.Unlock()
+		return nil, ErrBottleNameConflict
+	}
+
+	src, err := m.store.LoadBottle(sourceID)
+	if err != nil {
+		m.mu.Unlock()
+		if errors.Is(err, store.ErrBottleNotFound) {
+			return nil, ErrBottleNotFound
+		}
+		return nil, err
+	}
+	srcPrefix, err := m.store.PrefixDir(src.ID)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+
+	newID := uuid.NewString()
+	dstBottleDir, err := m.store.BottleDir(newID)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("resolve dst bottle dir: %w", err)
+	}
+	dstPrefix, err := m.store.PrefixDir(newID)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	// Create the destination BOTTLE dir but NOT the prefix leaf: `cp -Rc`
+	// must create <dst>/prefix itself. If <dst>/prefix already existed,
+	// cp would copy the source INTO it (yielding <dst>/prefix/prefix).
+	if err := os.MkdirAll(dstBottleDir, 0o755); err != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("create dst bottle dir: %w", err)
+	}
+
+	// The copy goes through Runner like every other process Mead spawns.
+	// /bin/cp is the macOS clonefile-capable cp (the -c flag); resolving
+	// it by absolute path keeps us off whatever cp a user's PATH prepends.
+	res, err := m.runner.Run(ctx, runner.Spec{
+		Argv: []string{"/bin/cp", "-Rc", srcPrefix, dstPrefix},
+	})
+	if err != nil {
+		_ = m.store.DeleteBottle(newID) // roll back the partial dst
+		m.mu.Unlock()
+		var out []byte
+		if res != nil {
+			out = res.Output
+		}
+		return nil, fmt.Errorf("clone prefix: %w\noutput:\n%s", err, truncate(out, 4096))
+	}
+
+	b := &Bottle{
+		ID:          newID,
+		Name:        name,
+		CreatedAt:   time.Now().UTC(),
+		WineVersion: src.WineVersion,
+	}
+	// Deep-copy env overrides so later edits to either bottle don't leak
+	// across. Leave nil when the source has none, so omitempty drops it.
+	if len(src.EnvOverrides) > 0 {
+		b.EnvOverrides = make(map[string]string, len(src.EnvOverrides))
+		for k, v := range src.EnvOverrides {
+			b.EnvOverrides[k] = v
+		}
+	}
+	if err := m.store.SaveBottle(b); err != nil {
+		_ = m.store.DeleteBottle(newID)
+		m.mu.Unlock()
+		return nil, fmt.Errorf("save cloned bottle: %w", err)
 	}
 	m.mu.Unlock()
 	m.emit()

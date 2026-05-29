@@ -40,11 +40,11 @@ import (
 // own package for one method. Rename the package if a third
 // "thing-you-run-in-a-bottle" lands.
 type Manager struct {
-	store       *store.Store
-	bottles     *bottles.Manager
-	wine        *wine.Locator
-	winetricks  *winetricks.Locator
-	runner      *runner.Runner
+	store      *store.Store
+	bottles    *bottles.Manager
+	wine       *wine.Locator
+	winetricks *winetricks.Locator
+	runner     *runner.Runner
 }
 
 // New returns a Manager wired to the given dependencies. wt may be
@@ -118,6 +118,41 @@ func (m *Manager) Launch(ctx context.Context, bottleID, exePath string, extraArg
 	}
 	args := append([]string{resolved}, extraArgs...)
 	spec, err := m.specForBottle(bottleID, args)
+	if err != nil {
+		return nil, err
+	}
+	return m.runner.Spawn(ctx, spec)
+}
+
+// Uninstall removes an installed Windows program from a bottle by
+// running `wine uninstaller --remove <key>`, which invokes that
+// program's registered UninstallString. key is an identifier from
+// `wine uninstaller --list` — an MSI product GUID like "{d8bbe9f9-…}"
+// or a plain registry subkey name like "Battle.net".
+//
+// This is the one thing apps.launch can't already do: drive Wine's
+// Add/Remove registry without knowing the uninstaller's exe path. To
+// run a specific uninstaller .exe directly (with silent flags), use
+// apps.launch with its path — Uninstall deliberately doesn't duplicate
+// that.
+//
+// DETACHED (runner.Spawn), returning a *runner.Process whose RunID the
+// caller polls via process.logs. Detach is mandatory: `wine uninstaller`
+// opens a GUI / progress window and would block a synchronous handler.
+//
+// AGENT CONTRACT: a returned run_id means "removal was STARTED," not
+// "removal succeeded." The uninstaller may pop UI, exit 0 without
+// removing anything (a non-matching key merely opens the Add/Remove
+// list), or stall waiting on the window. Poll process.logs and confirm
+// the program is actually gone. For a more reliable headless removal,
+// read the program's UninstallString via registry.get
+// (HKLM/HKCU\…\Uninstall\<key>) and apps.launch it with its silent flag.
+func (m *Manager) Uninstall(ctx context.Context, bottleID, key string) (*runner.Process, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, ErrUninstallKeyRequired
+	}
+	spec, err := m.specForBottle(bottleID, []string{"uninstaller", "--remove", key})
 	if err != nil {
 		return nil, err
 	}

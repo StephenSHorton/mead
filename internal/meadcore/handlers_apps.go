@@ -17,8 +17,8 @@ type runIDResult struct {
 }
 
 type appsInstallParams struct {
-	BottleID      string   `json:"bottle_id"`
-	InstallerPath string   `json:"installer_path"`
+	BottleID      string `json:"bottle_id"`
+	InstallerPath string `json:"installer_path"`
 	// Args are extra command-line arguments passed to the installer
 	// after its path. Use these for silent-install flags (/S for
 	// NSIS, /VERYSILENT for Inno, /silent for InstallShield).
@@ -58,6 +58,32 @@ func (c *Core) handleAppsLaunch(raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 	proc, err := c.Apps.Launch(context.Background(), p.BottleID, p.ExePath, p.Args...)
+	if err != nil {
+		return nil, err
+	}
+	return runIDResult{RunID: proc.ID()}, nil
+}
+
+type appsUninstallParams struct {
+	BottleID string `json:"bottle_id"`
+	// Key is an identifier from `wine uninstaller --list` — an MSI
+	// product GUID ("{d8bbe9f9-…}") or a plain registry subkey name
+	// ("Battle.net"). Mead runs `wine uninstaller --remove <key>`.
+	Key string `json:"key"`
+}
+
+func (c *Core) handleAppsUninstall(raw json.RawMessage) (any, error) {
+	if err := c.requireApps(); err != nil {
+		return nil, err
+	}
+	var p appsUninstallParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	// Detached: the wine uninstaller opens a GUI and would block. The
+	// run_id reports that removal STARTED — poll process.logs and verify
+	// the program is actually gone.
+	proc, err := c.Apps.Uninstall(context.Background(), p.BottleID, p.Key)
 	if err != nil {
 		return nil, err
 	}
