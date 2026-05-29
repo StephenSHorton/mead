@@ -5,12 +5,17 @@
 
 @custom-variant dark (&:is(.dark *));
 
+html,
 body {
     margin: 0;
+    /* Kill the macOS WebView rubber-band/elastic overscroll so the whole
+       UI doesn't bounce when you scroll past the top/bottom of a list. */
+    overscroll-behavior: none;
 }
 
 #app {
     height: 100vh;
+    overscroll-behavior: none;
 }
 
 :root {

@@ -203,7 +203,7 @@
       </div>
     </header>
 
-    <main class="flex-1 overflow-auto p-6">
+    <main class="flex-1 overflow-auto overscroll-none p-6">
       {#if selected}
         {#key selected.id}
           <BottleDetail bottle={selected} />

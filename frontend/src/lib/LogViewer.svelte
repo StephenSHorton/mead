@@ -173,7 +173,7 @@
     <div
       bind:this={scrollContainer}
       onscroll={onScroll}
-      class="bg-background text-foreground/90 h-[360px] overflow-auto rounded-md border"
+      class="bg-background text-foreground/90 h-[360px] overflow-auto overscroll-none rounded-md border"
     >
       <pre
         class="m-0 p-2 font-mono text-[0.72rem] leading-relaxed whitespace-pre-wrap break-all"
