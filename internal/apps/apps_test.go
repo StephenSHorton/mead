@@ -12,6 +12,7 @@ import (
 	"github.com/StephenSHorton/mead/internal/runner"
 	"github.com/StephenSHorton/mead/internal/store"
 	"github.com/StephenSHorton/mead/internal/wine"
+	"github.com/StephenSHorton/mead/internal/winetricks"
 )
 
 // newTestStack builds a Mead stack pointed at a temp directory with a
@@ -193,5 +194,55 @@ func TestList_UnknownBottle(t *testing.T) {
 	_, err := m.List("00000000-0000-0000-0000-000000000000")
 	if !errors.Is(err, bottles.ErrBottleNotFound) {
 		t.Errorf("expected ErrBottleNotFound, got %v", err)
+	}
+}
+
+// TestRunWinetricks_SetsWineAndWineserverEnv guards the silent-fail bug
+// where winetricks shelled `wineserver` via PATH and on a Mac with
+// Homebrew wine installed picked a different wineserver than WINE.
+// Both env vars must be set and point at binaries in the same dir.
+func TestRunWinetricks_SetsWineAndWineserverEnv(t *testing.T) {
+	m, _, bottleID := newTestStack(t)
+
+	// Re-wire the manager with a winetricks locator pointing at a fake
+	// script that echoes the env vars we care about into a known file.
+	binDir := t.TempDir()
+	wtBin := filepath.Join(binDir, "fake-winetricks")
+	traceFile := filepath.Join(binDir, "winetricks-trace.log")
+	script := `#!/bin/sh
+echo "WINE=$WINE" >> ` + traceFile + `
+echo "WINESERVER=$WINESERVER" >> ` + traceFile + `
+echo "WINEPREFIX=$WINEPREFIX" >> ` + traceFile + `
+`
+	if err := os.WriteFile(wtBin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake-winetricks: %v", err)
+	}
+	t.Setenv("MEAD_WINETRICKS_PATH", wtBin)
+
+	m.winetricks = winetricks.New()
+
+	proc, err := m.RunWinetricks(context.Background(), bottleID, "d3dx9")
+	if err != nil {
+		t.Fatalf("RunWinetricks: %v", err)
+	}
+	<-proc.Done()
+
+	data, err := os.ReadFile(traceFile)
+	if err != nil {
+		t.Fatalf("read winetricks trace: %v", err)
+	}
+	out := string(data)
+
+	wineEnv := os.Getenv("MEAD_WINE_PATH")
+	if wineEnv == "" {
+		t.Fatalf("MEAD_WINE_PATH not set by newTestStack")
+	}
+	wantWineLine := "WINE=" + wineEnv
+	if !strings.Contains(out, wantWineLine) {
+		t.Errorf("trace missing %q\ngot:\n%s", wantWineLine, out)
+	}
+	wantWineserverLine := "WINESERVER=" + filepath.Join(filepath.Dir(wineEnv), "wineserver")
+	if !strings.Contains(out, wantWineserverLine) {
+		t.Errorf("trace missing %q\ngot:\n%s", wantWineserverLine, out)
 	}
 }

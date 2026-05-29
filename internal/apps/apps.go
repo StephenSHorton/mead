@@ -123,11 +123,14 @@ func (m *Manager) Launch(ctx context.Context, bottleID, exePath string) (*runner
 // process.logs — winetricks installs are minutes-slow.
 //
 // The composed argv is `<winetricks> --unattended <verb>`. Winetricks
-// honors WINEPREFIX from env. We also set WINE to the resolved wine
-// binary path so winetricks doesn't fall back to its own PATH lookup
-// (which may pick a different wine than Mead's locator did, leading
-// to confusing "I told it to install but the bottle didn't change"
-// bugs).
+// honors WINEPREFIX from env. We also set WINE and WINESERVER to
+// paths derived from Mead's wine locator so winetricks doesn't fall
+// back to its own PATH lookup (which may pick a different wine than
+// Mead's locator did, leading to confusing "I told it to install but
+// the bottle didn't change" bugs). WINESERVER lives alongside the
+// wine binary; without it winetricks shells `wineserver` via PATH and
+// on a Mac with Homebrew wine installed picks a wineserver from a
+// different build than WINE, which crashes silently.
 func (m *Manager) RunWinetricks(ctx context.Context, bottleID, verb string) (*runner.Process, error) {
 	if strings.TrimSpace(verb) == "" {
 		return nil, ErrWinetricksVerbRequired
@@ -152,6 +155,7 @@ func (m *Manager) RunWinetricks(ctx context.Context, bottleID, verb string) (*ru
 	// winetricks shells to the same binary Mead uses.
 	spec.Argv = []string{wtPath, "--unattended", verb}
 	spec.Env["WINE"] = winePath
+	spec.Env["WINESERVER"] = filepath.Join(filepath.Dir(winePath), "wineserver")
 	return m.runner.Spawn(ctx, spec)
 }
 
