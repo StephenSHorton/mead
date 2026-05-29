@@ -37,7 +37,7 @@
   <!-- Header -->
   <div>
     <div class="flex items-start justify-between gap-3">
-      <h2 class="text-2xl font-semibold tracking-tight">{bottle.name}</h2>
+      <h2 class="min-w-0 truncate text-2xl font-semibold tracking-tight">{bottle.name}</h2>
       <Button variant="outline" size="sm" class="gap-2 shrink-0" onclick={requestClone}>
         <CopyIcon class="size-4" />
         Clone

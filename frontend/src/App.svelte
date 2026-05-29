@@ -171,7 +171,7 @@
 <Sidebar.Provider style="--sidebar-width: 17rem;">
   <AppSidebar {bottles} loading={!bottlesLoaded} onAskDelete={askDelete} />
 
-  <Sidebar.Inset class="flex min-h-svh flex-col">
+  <Sidebar.Inset class="flex min-h-svh min-w-0 flex-col">
     <!-- Top bar across the inset (right of sidebar) -->
     <header class="bg-background sticky top-0 z-10 flex h-12 items-center gap-2 border-b px-3">
       <Sidebar.Trigger />
