@@ -4,6 +4,7 @@
     BridgeTokenShort,
     ListBottles,
     DeleteBottle,
+    CloneBottle,
   } from '../wailsjs/go/main/App.js'
   import { EventsOn } from '../wailsjs/runtime/runtime'
   import type { main } from '../wailsjs/go/models'
@@ -16,6 +17,8 @@
 
   import { Button } from '$lib/components/ui/button'
   import { Badge } from '$lib/components/ui/badge'
+  import { Input } from '$lib/components/ui/input'
+  import { Label } from '$lib/components/ui/label'
   import * as Dialog from '$lib/components/ui/dialog'
   import * as Sidebar from '$lib/components/ui/sidebar'
   import { Toaster } from '$lib/components/ui/sonner'
@@ -31,6 +34,11 @@
 
   let confirmId = $state<string | null>(null)
   let deletingId = $state<string | null>(null)
+
+  // Clone dialog state. cloneSource non-null = dialog open.
+  let cloneSource = $state<main.BottleSummary | null>(null)
+  let cloneName = $state('')
+  let cloning = $state(false)
 
   // The selected bottle is computed from the shared store + current list.
   let selected = $derived(
@@ -58,6 +66,17 @@
       alive = false
       if (unsub) unsub()
     }
+  })
+
+  // BottleDetail's "Clone" button dispatches mead:clone-bottle; open the
+  // clone dialog pre-filled with a sensible default name.
+  $effect(() => {
+    function onClone(e: Event) {
+      const d = (e as CustomEvent<{ id: string; name: string }>).detail
+      askClone(d.id)
+    }
+    window.addEventListener('mead:clone-bottle', onClone)
+    return () => window.removeEventListener('mead:clone-bottle', onClone)
   })
 
   // If the selected bottle disappears (e.g. deleted out-of-band) clear the
@@ -107,6 +126,38 @@
     }
   }
 
+  function askClone(id: string) {
+    const b = bottles.find((x) => x.id === id)
+    if (!b) return
+    cloneSource = b
+    cloneName = `${b.name} copy`
+  }
+
+  function cancelClone() {
+    cloneSource = null
+  }
+
+  async function confirmClone() {
+    if (!cloneSource || cloning) return
+    const name = cloneName.trim()
+    if (!name) return
+    cloning = true
+    const toastId = toast.loading('Cloning bottle…', {
+      description: 'clonefile copy — usually instant',
+    })
+    try {
+      const b = await CloneBottle(cloneSource.id, name)
+      toast.success('Bottle cloned', { id: toastId, description: name })
+      cloneSource = null
+      if (b && b.id) ui.selectBottle(b.id)
+      await refresh()
+    } catch (err) {
+      toast.error('Clone failed', { id: toastId, description: errMessage(err) })
+    } finally {
+      cloning = false
+    }
+  }
+
   function openCreateBottle() {
     // The "+ New bottle" form lives inside AppSidebar; the palette's
     // "Create bottle" action just opens the palette-side trigger.
@@ -120,7 +171,7 @@
 <Sidebar.Provider style="--sidebar-width: 17rem;">
   <AppSidebar {bottles} loading={!bottlesLoaded} onAskDelete={askDelete} />
 
-  <Sidebar.Inset class="flex min-h-svh flex-col">
+  <Sidebar.Inset class="flex min-h-svh min-w-0 flex-col">
     <!-- Top bar across the inset (right of sidebar) -->
     <header class="bg-background sticky top-0 z-10 flex h-12 items-center gap-2 border-b px-3">
       <Sidebar.Trigger />
@@ -152,7 +203,7 @@
       </div>
     </header>
 
-    <main class="flex-1 overflow-auto p-6">
+    <main class="flex-1 overflow-auto overscroll-none p-6">
       {#if selected}
         {#key selected.id}
           <BottleDetail bottle={selected} />
@@ -168,6 +219,7 @@
   {bottles}
   onNewBottle={openCreateBottle}
   onDeleteBottle={askDelete}
+  onCloneBottle={askClone}
 />
 
 <!-- Delete confirmation dialog -->
@@ -197,5 +249,48 @@
         {deletingId !== null ? 'Deleting…' : 'Delete'}
       </Button>
     </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+
+<!-- Clone bottle dialog -->
+<Dialog.Root
+  open={cloneSource !== null}
+  onOpenChange={(open) => {
+    if (!open) cancelClone()
+  }}
+>
+  <Dialog.Content>
+    <Dialog.Header>
+      <Dialog.Title>Clone bottle</Dialog.Title>
+      <Dialog.Description>
+        Copies <span class="font-medium">{cloneSource?.name}</span>'s entire wine prefix
+        (apps, registry, settings) into a new bottle. On APFS this is a near-instant
+        copy-on-write clone.
+      </Dialog.Description>
+    </Dialog.Header>
+    <form
+      onsubmit={(e) => {
+        e.preventDefault()
+        void confirmClone()
+      }}
+    >
+      <Label for="clone-name" class="text-xs">New bottle name</Label>
+      <!-- svelte-ignore a11y_autofocus -->
+      <Input
+        id="clone-name"
+        class="mt-1.5"
+        bind:value={cloneName}
+        disabled={cloning}
+        autofocus
+      />
+      <Dialog.Footer class="mt-4">
+        <Button type="button" variant="ghost" onclick={cancelClone} disabled={cloning}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={cloning || !cloneName.trim()}>
+          {cloning ? 'Cloning…' : 'Clone'}
+        </Button>
+      </Dialog.Footer>
+    </form>
   </Dialog.Content>
 </Dialog.Root>

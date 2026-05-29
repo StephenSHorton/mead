@@ -8,6 +8,8 @@
   import SlidersIcon from '@lucide/svelte/icons/sliders-horizontal'
   import LayersIcon from '@lucide/svelte/icons/layers'
   import FlaskConicalIcon from '@lucide/svelte/icons/flask-conical'
+  import KeyRoundIcon from '@lucide/svelte/icons/key-round'
+  import CopyIcon from '@lucide/svelte/icons/copy'
   import Trash2Icon from '@lucide/svelte/icons/trash-2'
   import TerminalIcon from '@lucide/svelte/icons/terminal'
   import HelpCircleIcon from '@lucide/svelte/icons/help-circle'
@@ -17,10 +19,12 @@
     bottles,
     onNewBottle,
     onDeleteBottle,
+    onCloneBottle,
   }: {
     bottles: main.BottleSummary[]
     onNewBottle: () => void
     onDeleteBottle: (id: string) => void
+    onCloneBottle: (id: string) => void
   } = $props()
 
   // Global hotkey: Cmd+K (macOS) / Ctrl+K (others) toggles the palette.
@@ -119,6 +123,20 @@
         >
           <LayersIcon />
           <span>Set DLL override</span>
+        </Command.Item>
+        <Command.Item
+          keywords={['registry', 'reg', 'key', 'value', 'hkcu', 'hklm']}
+          onSelect={() => run(() => ui.openTab('registry', true))}
+        >
+          <KeyRoundIcon />
+          <span>Edit registry</span>
+        </Command.Item>
+        <Command.Item
+          keywords={['clone', 'duplicate', 'copy']}
+          onSelect={() => run(() => onCloneBottle(selectedBottle!.id))}
+        >
+          <CopyIcon />
+          <span>Clone <b>{selectedBottle.name}</b></span>
         </Command.Item>
         <Command.Item
           keywords={['delete', 'remove']}
