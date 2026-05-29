@@ -215,11 +215,18 @@ func (m *Manager) specForBottle(bottleID string, wineArgs []string) (runner.Spec
 	// per process.
 	logPath := filepath.Join(logsDir, uniqueLogName())
 
-	// Fold the bottle's persisted env overrides (set via env.set /
-	// dll.override) into the spec's env. WINEPREFIX is set last so a
-	// rogue env.set("WINEPREFIX", "/somewhere/else") can't break
-	// bottle isolation.
+	// Layer the env in increasing precedence:
+	//  1. The Wine's own preamble (DYLD/D3DMetal etc. for a GPTK Wine;
+	//     empty for a plain one) — defaults the bottle can override.
+	//  2. The bottle's persisted overrides (env.set / dll.override).
+	//  3. WINEPREFIX last, so a rogue env.set("WINEPREFIX", …) can't
+	//     break bottle isolation.
 	env := map[string]string{}
+	if preamble, err := m.wine.Preamble(); err == nil {
+		for k, v := range preamble {
+			env[k] = v
+		}
+	}
 	if overrides, err := m.bottles.EnvOverrides(b.ID); err == nil {
 		for k, v := range overrides {
 			env[k] = v

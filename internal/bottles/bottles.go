@@ -142,9 +142,21 @@ func (m *Manager) Create(ctx context.Context, name string) (*Bottle, error) {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("pre-create prefix dir: %w", err)
 	}
+	// Seed wineboot's env with the Wine's preamble (empty for a plain
+	// Wine; for a GPTK/D3DMetal Wine this disables the Mono/Gecko nag
+	// via WINEDLLOVERRIDES so --init doesn't stall, and sets the DYLD
+	// path the translated d3d builtins are deployed against). WINEPREFIX
+	// is set last so it can't be clobbered.
+	bootEnv := map[string]string{}
+	if preamble, perr := m.wine.Preamble(); perr == nil {
+		for k, v := range preamble {
+			bootEnv[k] = v
+		}
+	}
+	bootEnv["WINEPREFIX"] = prefixDir
 	res, err := m.runner.Run(ctx, runner.Spec{
 		Argv: []string{winePath, "wineboot", "--init"},
-		Env:  map[string]string{"WINEPREFIX": prefixDir},
+		Env:  bootEnv,
 	})
 	if err != nil {
 		// Roll back the partial prefix so the user doesn't see a

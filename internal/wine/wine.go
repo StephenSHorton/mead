@@ -110,6 +110,59 @@ func (l *Locator) Version() (string, error) {
 	return l.version, nil
 }
 
+// Preamble returns the extra environment variables this particular Wine
+// needs to run correctly — beyond WINEPREFIX, which the caller always
+// sets. Callers (bottles.Create's wineboot, apps.Install/Launch) merge
+// this UNDERNEATH the bottle's own env overrides so a user's env.set
+// always wins.
+//
+// For an Apple GPTK / D3DMetal Wine — detected by a D3DMetal.framework
+// sitting in <wineRoot>/lib/external — this returns:
+//
+//   - DYLD_FALLBACK_LIBRARY_PATH: prepends lib/external so the Mach-O
+//     loader finds D3DMetal.framework, libd3dshared.dylib, DXMT, and
+//     libMoltenVK.dylib (the macOS graphics-bridge libs the translated
+//     d3d DLLs dlopen). Without it the d3d11/d3d12/dxgi builtins fail to
+//     bind their backend and the app falls back to a dead GL path (or
+//     renders nothing). /usr/local/lib:/usr/lib keeps the system default
+//     fallbacks reachable.
+//   - WINEDLLOVERRIDES: disables winemenubuilder/mscoree/mshtml so a
+//     fresh prefix doesn't stall on a Mono/Gecko install prompt.
+//   - ROSETTA_ADVERTISE_AVX: makes Rosetta advertise AVX so titles that
+//     probe for it (Battle.net, many D3D games) take their fast path.
+//
+// Returns an empty map (never nil — callers can range freely) for a
+// plain Wine that needs no preamble, and propagates a Path() error.
+//
+// The D3DMetal Wine's own loader binary carries the
+// allow-dyld-environment-variables + disable-library-validation
+// entitlements, so the DYLD_ override survives exec into the hardened
+// Wine process.
+func (l *Locator) Preamble() (map[string]string, error) {
+	path, err := l.Path()
+	if err != nil {
+		return nil, err
+	}
+	return preambleFor(path, l.stat), nil
+}
+
+// preambleFor is the pure core of Preamble: given a resolved Wine binary
+// path and a stat hook, decide whether it's a D3DMetal Wine and return
+// the matching env. Split out so tests can drive it without a real FS.
+func preambleFor(winePath string, stat func(string) error) map[string]string {
+	env := map[string]string{}
+	// <wineRoot>/bin/<wine|wine64> → <wineRoot>.
+	wineRoot := filepath.Dir(filepath.Dir(winePath))
+	external := filepath.Join(wineRoot, "lib", "external")
+	if stat(filepath.Join(external, "D3DMetal.framework")) != nil {
+		return env // not a D3DMetal Wine — no preamble needed.
+	}
+	env["DYLD_FALLBACK_LIBRARY_PATH"] = external + ":/usr/local/lib:/usr/lib"
+	env["WINEDLLOVERRIDES"] = "winemenubuilder.exe=d;mscoree=d;mshtml=d"
+	env["ROSETTA_ADVERTISE_AVX"] = "1"
+	return env
+}
+
 // resolve walks the candidate list in priority order, returning the
 // first path that exists. The pathErr it returns on miss includes every
 // candidate so the UI can render an actionable message.
