@@ -5,6 +5,11 @@
 // Resolution order for the Wine binary (first hit wins):
 //
 //  1. MEAD_WINE_PATH env var (full path to a `wine` / `wine64` binary).
+//     1b. The Mead-owned Wine built by scripts/build-wine-macos.sh, at
+//     <repo>/scripts/wine/bin/wine (found by walking up from the running
+//     binary, then at the canonical ~/projects/mead checkout). This is a
+//     Wine 11 + GPTK 3.0 build that lands D3DMetal in lib/external, so
+//     Preamble() auto-activates the GPTK env for it.
 //  2. The bundled GPTK Wine at <app>/Contents/Resources/wine/bin/wine64.
 //  3. The gcenx "game-porting-toolkit" Homebrew *cask*, which installs a
 //     ready-to-run GPTK Wine into "Game Porting Toolkit.app" under
@@ -230,6 +235,37 @@ func (l *Locator) resolve() (string, error) {
 	// 1. Env var override.
 	if p, ok := check(l.lookupEnv("MEAD_WINE_PATH")); ok {
 		return p, nil
+	}
+
+	// 1b. Mead-owned Wine produced by scripts/build-wine-macos.sh
+	// (Wine 11 + GPTK 3.0, the D4Mac substrate). It lands D3DMetal at
+	// <root>/lib/external/D3DMetal.framework, exactly where Preamble()
+	// looks, so detecting it here auto-activates the GPTK env. We find it
+	// by walking up from the running binary to a repo root holding
+	// scripts/wine/bin/wine (covers `wails dev` and a build run from
+	// inside the repo — stat directly so misses don't clutter the
+	// not-found error), then the canonical ~/projects/mead checkout.
+	if exe, err := l.executable(); err == nil {
+		dir := filepath.Dir(exe)
+		// A built .app sits ~5 levels under the repo root
+		// (build/bin/mead.app/Contents/MacOS/<bin>); 8 gives headroom.
+		for i := 0; i < 8; i++ {
+			cand := filepath.Join(dir, "scripts", "wine", "bin", "wine")
+			if l.stat(cand) == nil {
+				return cand, nil
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	if home, err := l.userHomeDir(); err == nil && home != "" {
+		owned := filepath.Join(home, "projects", "mead", "scripts", "wine", "bin", "wine")
+		if p, ok := check(owned); ok {
+			return p, nil
+		}
 	}
 
 	// 2. Bundled GPTK relative to the running binary. The Wails-built

@@ -11,7 +11,12 @@ go vet ./...
 go test ./...
 cd frontend && npm run check              # svelte-check (typecheck)
 cd frontend && npm run build              # vite build (also part of wails build)
+scripts/build-wine-macos.sh               # build the Mead-owned Wine 11 + GPTK 3.0 (see below)
 ```
+
+### Mead-owned Wine
+
+`scripts/build-wine-macos.sh` builds a Metal-backed **Wine 11 + Apple GPTK 3.0** from FREE LGPL CrossOver sources via [cxbuilder](https://github.com/101arrowz/cxbuilder), overlaying Apple's GPTK 3.0 redist (D3DMetal) to match the D4Mac donor — so Mead no longer depends on D4Mac's binary. Output lands in `scripts/wine/` (gitignored; ~hundreds of MB). The Metal backend is genuinely in the free source (`dlls/winemac.drv/d3dmetal*.{c,m}`, LGPL). `internal/wine` auto-detects the result. Run `~35 min`, `~10 GB` scratch (point `WORK_DIR` outside the repo). On macOS 26 (Tahoe) the script patches cxbuilder's host-OS→bottle map (it stops at macOS 15). Render of a real CEF app is screen-blind to the agent — the user confirms pixels.
 
 The resolved binary lives at `build/bin/mead.app/Contents/MacOS/mead`. v0.1 is macOS-only (`darwin/arm64` by default; cross to `darwin/amd64` with `wails build -platform darwin/amd64`).
 
@@ -53,7 +58,7 @@ Single Wails v2 executable. Go owns the system layer (Wine processes, bottle fil
 - `internal/meadcore` — the app singleton. `Core` owns the four subsystems below; `RegisterAll(b, c)` in `handlers.go` is the **single registration point** for every MCP method. Adding a new MCP tool means: write `handle<Foo>`, add `reg("foo.bar", handleFoo)` to `RegisterAll`, and add the matching method to the underlying manager.
 - `internal/bridge` — wire transport only (JSON-RPC 2.0 over NDJSON on 127.0.0.1, ephemeral port, per-pid lockfile, token auth on `params._token`). Ported from wc3-forge, parameterized via `bridge.Config{AppName}` so it carries no Mead-specific assumptions. Lockfile dir defaults to `$HOME/.mead/mcp/`, overridable via `MEAD_MCP_LOCK_DIR`.
 - `internal/bottles` — bottle lifecycle (create, clone, list, get, delete). Composes `store` (metadata persistence), `wine` (binary location), and `runner` (process spawning for `wineboot`, and `cp -Rc` for clonefile-backed clones). Does NOT own wire transport or directly call into Wine itself.
-- `internal/wine` — locates the Wine binary, reports its version. Resolution order: `MEAD_WINE_PATH` env, bundled GPTK at `<app>/Contents/Resources/wine/bin/wine64`, the gcenx `game-porting-toolkit` Homebrew **cask** (`/Applications/Game Porting Toolkit.app/...` or `~/Applications`), the Apple `game-porting-toolkit` Homebrew **formula**, PATH lookup.
+- `internal/wine` — locates the Wine binary, reports its version. Resolution order: `MEAD_WINE_PATH` env, the **Mead-owned Wine** built by `scripts/build-wine-macos.sh` (`<repo>/scripts/wine/bin/wine`, found by walking up from the binary then at `~/projects/mead`), bundled GPTK at `<app>/Contents/Resources/wine/bin/wine64`, the gcenx `game-porting-toolkit` Homebrew **cask** (`/Applications/Game Porting Toolkit.app/...` or `~/Applications`), the Apple `game-porting-toolkit` Homebrew **formula**, PATH lookup.
 - `internal/runner` — process supervisor. Spawns Wine processes against a bottle, captures stdout/stderr into per-bottle log files, tracks PIDs for kill/list, emits events for both the GUI and MCP. Every operation that mutates the user environment ultimately goes through Runner — centralizing logging and the agent's `process_logs` / `process_kill` surface.
 - `internal/store` — file-backed persistence under `$HOME/Library/Application Support/Mead/`. Bottle metadata, app shortcuts, install history, env overrides.
 

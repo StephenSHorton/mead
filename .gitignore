@@ -45,8 +45,10 @@ mead.log
 # Wails-CLI install-cache marker — regenerated on every `wails build`
 /frontend/package.json.md5
 
-# Bundled GPTK / Wine binaries get dropped here by build-wine-macos.sh
-# (lands in a future PR); .gitignored because each dev builds their own
-# from a known-good source. The .h headers stay.
-/scripts/wine/bin/
-/scripts/wine/lib/
+# Mead-owned Wine built by scripts/build-wine-macos.sh — the whole tree is
+# .gitignored (each dev builds their own from known-good free sources; it's
+# ~hundreds of MB and machine-specific). Includes bin/, lib/, overlay
+# markers, and cxbuilder logs.
+/scripts/wine/
+# cxbuilder + wine-source scratch, if a dev points WORK_DIR back into the repo.
+/scripts/.wine-build/
