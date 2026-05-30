@@ -459,8 +459,23 @@ overlay() {
     codesign -f -s - "$ext/dxmt/x86_64-unix/winemetal.so" 2>/dev/null || true
   fi
 
+  # 5f. Strip the macOS quarantine attribute from the overlaid Apple libs.
+  # ditto/cp out of the GPTK dmg + the D4Mac donor carries
+  # com.apple.quarantine; a non-notarized self-built Wine then trips
+  # Gatekeeper on the FIRST dlopen of libd3dshared.dylib / D3DMetal.framework
+  # ("Apple could not verify … is free of malware"), which BLOCKS the load
+  # (and the dialog's default "Move to Trash" would delete the lib). The
+  # symbols are exactly the same Apple D3DMetal bits D4Mac ships — they're
+  # safe; the quarantine is just the downloaded-from-the-dmg provenance.
+  # Strip it from the whole output tree. Errors are tolerated on purpose:
+  # cxbuilder's own on-machine-built dylibs are read-only and carry NO
+  # quarantine, so `xattr -d` errors harmlessly on them — and under
+  # `set -e` we must not let that abort the build.
+  log "stripping com.apple.quarantine from the overlaid libs"
+  xattr -rd com.apple.quarantine "$OUT_DIR" 2>/dev/null || true
+
   touch "$marker"
-  ok "overlay complete; lib/external now matches the D4Mac donor"
+  ok "overlay complete; lib/external now matches the D4Mac donor (de-quarantined)"
 }
 
 overlay_dxmt_and_moltenvk() {
@@ -567,6 +582,20 @@ verify() {
   [[ -e "$OUT_DIR/lib/external/D3DMetal.framework/D3DMetal" ]] \
     || die "D3DMetal.framework not where Preamble looks (lib/external)"
   ok "D3DMetal.framework present where wine.Preamble() detects it"
+
+  # 7c2. Quarantine must be stripped from the overlaid Apple libs (step 5f),
+  # else Gatekeeper blocks the first dlopen. Check the load-bearing ones.
+  # Capture xattr output into a var and match with bash (no `| grep -q`,
+  # which trips set -o pipefail when grep exits early and xattr gets SIGPIPE).
+  local q=0 qa
+  for f in lib/external/libd3dshared.dylib lib/external/D3DMetal.framework/Versions/A/D3DMetal lib/external/libMoltenVK.dylib; do
+    qa="$(xattr "$OUT_DIR/$f" 2>/dev/null || true)"
+    if [[ "$qa" == *com.apple.quarantine* ]]; then
+      warn "$f still quarantined — Gatekeeper will block it on first load"
+      q=1
+    fi
+  done
+  [[ "$q" -eq 0 ]] && ok "overlaid Apple libs are de-quarantined (no Gatekeeper block)"
 
   # 7d. Overlay forensics — prove the Apple D3DMetal DLLs actually landed
   # (not plain wined3d), and that the unix .so thunks point at libd3dshared.
