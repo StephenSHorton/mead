@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/StephenSHorton/mead/internal/history"
 )
 
 // env.set / env.get / dll.override — the prefix-tweak surface.
@@ -33,9 +35,24 @@ func (c *Core) handleEnvSet(raw json.RawMessage) (any, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
+	// Capture the prior value so undo can restore it (or re-delete when the
+	// key was absent). Best-effort: a read failure just yields an empty
+	// before, and the SetEnv below surfaces any real error (e.g. unknown
+	// bottle) before we record anything.
+	before := history.State{}
+	if prior, err := c.Bottles.EnvOverrides(p.BottleID); err == nil {
+		if v, ok := prior[p.Key]; ok {
+			before = history.State{Present: true, Value: v}
+		}
+	}
 	if err := c.Bottles.SetEnv(p.BottleID, p.Key, p.Value); err != nil {
 		return nil, err
 	}
+	after := history.State{}
+	if p.Value != "" { // empty value deletes the key — that's an absent after-state
+		after = history.State{Present: true, Value: p.Value}
+	}
+	c.recordEnvSet(p.BottleID, p.Key, before, after)
 	return pingResult{OK: true}, nil
 }
 
@@ -99,10 +116,20 @@ func (c *Core) handleDLLOverride(raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	updated := setDLLOverride(current["WINEDLLOVERRIDES"], p.DLL, p.Mode)
+	// undo/redo for dll.override operate on the WHOLE WINEDLLOVERRIDES
+	// string (a per-DLL delta can't be cleanly inverted — it loses whether
+	// the DLL was previously present and in what mode).
+	priorVal, priorPresent := current["WINEDLLOVERRIDES"]
+	updated := setDLLOverride(priorVal, p.DLL, p.Mode)
 	if err := c.Bottles.SetEnv(p.BottleID, "WINEDLLOVERRIDES", updated); err != nil {
 		return nil, err
 	}
+	before := history.State{Present: priorPresent, Value: priorVal}
+	after := history.State{}
+	if updated != "" { // an empty result removes WINEDLLOVERRIDES entirely
+		after = history.State{Present: true, Value: updated}
+	}
+	c.recordDLLOverride(p.BottleID, p.DLL, before, after)
 	return pingResult{OK: true}, nil
 }
 

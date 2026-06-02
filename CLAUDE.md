@@ -60,7 +60,8 @@ Single Wails v2 executable. Go owns the system layer (Wine processes, bottle fil
 - `internal/bottles` — bottle lifecycle (create, clone, list, get, delete). Composes `store` (metadata persistence), `wine` (binary location), and `runner` (process spawning for `wineboot`, and `cp -Rc` for clonefile-backed clones). Does NOT own wire transport or directly call into Wine itself.
 - `internal/wine` — locates the Wine binary, reports its version. Resolution order: `MEAD_WINE_PATH` env, the **Mead-owned Wine** built by `scripts/build-wine-macos.sh` (`<repo>/scripts/wine/bin/wine`, found by walking up from the binary then at `~/projects/mead`), bundled GPTK at `<app>/Contents/Resources/wine/bin/wine64`, the gcenx `game-porting-toolkit` Homebrew **cask** (`/Applications/Game Porting Toolkit.app/...` or `~/Applications`), the Apple `game-porting-toolkit` Homebrew **formula**, PATH lookup.
 - `internal/runner` — process supervisor. Spawns Wine processes against a bottle, captures stdout/stderr into per-bottle log files, tracks PIDs for kill/list, emits events for both the GUI and MCP. Every operation that mutates the user environment ultimately goes through Runner — centralizing logging and the agent's `process_logs` / `process_kill` surface.
-- `internal/store` — file-backed persistence under `$HOME/Library/Application Support/Mead/`. Bottle metadata, app shortcuts, install history, env overrides.
+- `internal/store` — file-backed persistence under `$HOME/Library/Application Support/Mead/`. Bottle metadata + env overrides (per-bottle `metadata.json`), process log files + sidecars (per-bottle `logs/`), and the global undo/redo journal (`history.json`). Owns paths + atomic (temp-then-rename) writes; does not spawn Wine or enforce domain rules.
+- `internal/history` — the global undo/redo journal: a two-stack (undo/redo) record of reversible prefix mutations, persisted to `history.json`. Pure data + persistence — it does NOT apply inverses; `meadcore` owns the apply logic (it calls the bottle/registry primitives directly, which is why no replay-suppression flag is needed: recording lives in the MCP handlers, not the primitives).
 
 The top-level `app.go` + `main.go` are the Wails surface: they construct the Core, wire it into the bridge, and expose a tiny TS-visible API (`BridgePort`, `BridgeTokenShort`) so the frontend can show connection info in the Agent Console.
 
@@ -83,12 +84,9 @@ Single registration point: `meadcore.RegisterAll`. Naming convention: `<noun>.<v
 | Processes | ✓ `process.list`, ✓ `process.get`, ✓ `process.kill`, ✓ `process.logs` (offset-based polling) |
 | Prefix tweaks | ✓ `env.set`, ✓ `env.get`, ✓ `dll.override`, ✓ `winetricks.run`, ✓ `registry.get`, ✓ `registry.set` |
 | Diagnostics | ✓ `logs.tail`, ✓ `logs.search` (bottle-keyed, across run history; distinct from `process.logs`' single-RunID byte polling), ✓ `bottles.inspect` (one-shot snapshot: metadata, env/dll overrides, log inventory, live processes, optional `include_disk` size walk) |
+| History | ✓ `history.undo`, ✓ `history.redo`, ✓ `history.list` — a global undo/redo journal (`<store-root>/history.json`). **Tracked + reversible:** `env.set`, `dll.override`, `registry.set`, `bottles.create`, `bottles.clone`. Undoing a create/clone deletes the bottle (terminal — it clears the redo stack, since a recreate would mint a new id). **Not tracked:** `winetricks.run`, `apps.install`, `apps.uninstall`, `bottles.delete` — no clean inverse short of a full prefix snapshot, so they're invisible to undo/redo (deliberate v0.1 line). |
 
-Planned (land as the underlying packages get bodies):
-
-| Surface | Tools |
-|---|---|
-| History | `history.undo`, `history.redo`, `history.list` — undo covers `env.set` / `dll.override` / `registry.set` / `bottles.create` / `bottles.clone`; `winetricks.run` / `apps.install` / `apps.uninstall` / `bottles.delete` are recorded but not reversible (no clean inverse short of a full prefix snapshot) |
+The MCP surface is now complete (everything originally documented as planned is implemented). Remaining v0.1 work is non-MCP (GPTK bundling, distribution).
 
 The agent debug loop (the marquee feature) is complete: Claude reads `process.logs`, identifies the issue, calls `env.set` / `dll.override` / `winetricks.run` to fix, retries via `apps.launch`. Both halves — diagnose AND repair — are wired and verified end-to-end via real JSON-RPC.
 

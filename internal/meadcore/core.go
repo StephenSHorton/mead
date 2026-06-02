@@ -15,6 +15,7 @@ import (
 
 	"github.com/StephenSHorton/mead/internal/apps"
 	"github.com/StephenSHorton/mead/internal/bottles"
+	"github.com/StephenSHorton/mead/internal/history"
 	"github.com/StephenSHorton/mead/internal/registry"
 	"github.com/StephenSHorton/mead/internal/runner"
 	"github.com/StephenSHorton/mead/internal/store"
@@ -32,6 +33,7 @@ type Core struct {
 	Runner     *runner.Runner
 	Apps       *apps.Manager
 	Registry   *registry.Manager
+	History    *history.Journal
 }
 
 // New constructs a fully-wired core. If the store can't be opened
@@ -68,6 +70,14 @@ func New() (*Core, error) {
 	if err := adoptExistingProcesses(s, r); err != nil {
 		log.Printf("meadcore: process discovery: %v (continuing)", err)
 	}
+	// Open the undo/redo journal. A corrupt journal is logged and left nil
+	// (history.* methods report unavailable) rather than blocking startup —
+	// same degrade-don't-crash stance as the store/discovery paths above.
+	hj, err := history.Open(s.Root())
+	if err != nil {
+		log.Printf("meadcore: history.Open failed: %v (undo/redo disabled; rest of Mead works)", err)
+		hj = nil
+	}
 	return &Core{
 		Store:      s,
 		Wine:       w,
@@ -76,6 +86,7 @@ func New() (*Core, error) {
 		Bottles:    bm,
 		Apps:       apps.New(s, bm, w, wt, r),
 		Registry:   registry.New(s, bm, w, r),
+		History:    hj,
 	}, nil
 }
 
@@ -101,6 +112,16 @@ func (c *Core) requireApps() error {
 func (c *Core) requireRegistry() error {
 	if c.Registry == nil {
 		return fmt.Errorf("registry unavailable: store failed to open at startup (see app log)")
+	}
+	return nil
+}
+
+// requireHistory mirrors requireBottles for the undo/redo journal. When
+// History is non-nil the store opened successfully, so Bottles + Registry
+// (which the inverse-apply path needs) are guaranteed wired too.
+func (c *Core) requireHistory() error {
+	if c.History == nil {
+		return fmt.Errorf("history unavailable: store failed to open or journal was corrupt at startup (see app log)")
 	}
 	return nil
 }

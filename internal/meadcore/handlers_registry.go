@@ -3,6 +3,9 @@ package meadcore
 import (
 	"context"
 	"encoding/json"
+	"strings"
+
+	"github.com/StephenSHorton/mead/internal/history"
 )
 
 // registry.get / registry.set — reading and writing a bottle's Windows
@@ -59,8 +62,29 @@ func (c *Core) handleRegistrySet(raw json.RawMessage) (any, error) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
+	// Read the prior state BEFORE writing so undo can restore (or delete)
+	// it. This adds a `reg query` ahead of the `reg add`; the cost buys
+	// reversibility. When the prior state can't be cleanly captured —
+	// a no-op key-create over an existing key, or a transient query
+	// failure — recordable is false and we simply DON'T track this set:
+	// it stays invisible to undo (same as winetricks/apps), rather than
+	// becoming a non-undoable barrier that would wedge the rest of the
+	// undo stack.
+	before, recordable := c.registrySetBefore(p.BottleID, p.Key, p.Value)
 	if err := c.Registry.Set(context.Background(), p.BottleID, p.Key, p.Value, p.Type, p.Data); err != nil {
 		return nil, err
+	}
+	if recordable {
+		after := history.State{Present: true}
+		if p.Value != "" {
+			t := strings.ToUpper(strings.TrimSpace(p.Type))
+			if t == "" {
+				t = "REG_SZ"
+			}
+			after.Type = t
+			after.Data = p.Data
+		}
+		c.recordRegistrySet(p.BottleID, p.Key, p.Value, before, after)
 	}
 	return pingResult{OK: true}, nil
 }
