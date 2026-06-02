@@ -54,6 +54,11 @@ func RegisterAll(b *bridge.Bridge, c *Core) {
 	// --- Registry (the repair surface, cont.) ----------------------------
 	reg("registry.get", c.handleRegistryGet)
 	reg("registry.set", c.handleRegistrySet)
+
+	// --- Diagnostics (read-only visibility) ------------------------------
+	reg("logs.tail", c.handleLogsTail)
+	reg("logs.search", c.handleLogsSearch)
+	reg("bottles.inspect", c.handleBottlesInspect)
 }
 
 // pingResult is the response shape for bridge.ping — kept stable across

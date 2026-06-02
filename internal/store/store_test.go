@@ -228,3 +228,55 @@ func TestBottleDir_PathTraversalRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestLogFiles(t *testing.T) {
+	s := newTempStore(t)
+	id := "77777777-7777-7777-7777-777777777777"
+
+	// No logs dir yet → empty, no error.
+	got, err := s.LogFiles(id)
+	if err != nil {
+		t.Fatalf("LogFiles (no dir): %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected no log files, got %v", got)
+	}
+
+	logsDir, err := s.LogsDir(id) // mkdir-ps
+	if err != nil {
+		t.Fatalf("LogsDir: %v", err)
+	}
+	// Two logs (out of lexical order on disk), plus a sidecar and a tmp
+	// file that must be excluded.
+	for name, content := range map[string]string{
+		"200-2.log":      "second",
+		"100-1.log":      "first",
+		"100-1.log.json": `{"id":"x"}`,
+		"100-1.log.tmp":  "partial",
+	} {
+		if err := os.WriteFile(filepath.Join(logsDir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	got, err = s.LogFiles(id)
+	if err != nil {
+		t.Fatalf("LogFiles: %v", err)
+	}
+	want := []string{"100-1.log", "200-2.log"} // sorted ascending == chronological
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("LogFiles[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestLogFiles_RejectsBadID(t *testing.T) {
+	s := newTempStore(t)
+	if _, err := s.LogFiles("../escape"); err == nil {
+		t.Error("expected error for path-traversal id")
+	}
+}

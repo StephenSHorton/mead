@@ -172,17 +172,26 @@ func TestCreate_FailsWhenWineNotFound(t *testing.T) {
 	// Force locator into the no-wine state.
 	t.Setenv("MEAD_WINE_PATH", "/definitely/does/not/exist")
 	t.Setenv("PATH", "/tmp/empty-path-dir") // also strip PATH so wine64/wine misses
+	// Point HOME at an empty temp dir so the home-relative candidates
+	// resolve to nothing: the Mead-owned-Wine fallback (step 1b checks
+	// ~/projects/mead/scripts/wine/bin/wine) and the ~/Applications cask
+	// dir. Without this, a dev box that has built the Mead-owned Wine at
+	// ~/projects/mead/scripts/wine defeats the neutralization and Create
+	// unexpectedly succeeds.
+	t.Setenv("HOME", t.TempDir())
 	s, err := store.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
 	// Neutralize every wine-resolution source so this stays deterministic
-	// on a dev box that has GPTK installed: MEAD_WINE_PATH points at a
-	// missing path (step 1); the empty PATH means `brew` can't be found so
-	// the formula lookup is skipped (step 4) and `wine64`/`wine` miss
-	// (step 5); the running test binary isn't an .app bundle (step 2); and
-	// WithAppDirs() (step 3) disables gcenx-cask detection, which is the
-	// one source that otherwise hits a real absolute path in /Applications.
+	// on a dev box that has GPTK (or the Mead-owned Wine) installed:
+	// MEAD_WINE_PATH points at a missing path (step 1); HOME is an empty
+	// temp dir so the Mead-owned-Wine + ~/Applications candidates miss
+	// (step 1b); the running test binary isn't under a repo with
+	// scripts/wine nor an .app bundle (steps 1b-walkup, 2); the empty PATH
+	// means `brew` can't be found so the formula lookup is skipped (step 4)
+	// and `wine64`/`wine` miss (step 5); and WithAppDirs() (step 3)
+	// disables gcenx-cask detection in /Applications.
 	m := New(s, wine.New(wine.WithAppDirs()), runner.New())
 
 	_, err = m.Create(context.Background(), "Anything")
