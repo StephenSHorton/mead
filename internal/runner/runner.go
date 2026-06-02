@@ -408,6 +408,13 @@ func (c *cappedBuffer) Bytes() []byte { return c.b.Bytes() }
 // filling the disk.
 const maxSpawnLogBytes = 64 << 20
 
+// TruncationMarker is the one-time line cappedWriter emits when a
+// detached process's log first crosses maxSpawnLogBytes. The diagnostics
+// surface (logs.tail) scans for it to tell the agent that output past
+// the cap was dropped, so the string is a contract — not just a log
+// message — and lives here as the single source of truth.
+const TruncationMarker = "[mead: log truncated at 64 MiB cap; further output dropped]"
+
 // cappedWriter forwards to w until cap bytes have been written, then
 // drops further data after emitting a one-time truncation marker. Used
 // to bound the detached Spawn log file. NOT safe for concurrent use —
@@ -428,7 +435,7 @@ func (c *cappedWriter) Write(p []byte) (int, error) {
 		c.written += n
 		if !c.truncated {
 			c.truncated = true
-			_, _ = io.WriteString(c.w, "\n[mead: log truncated at 64 MiB cap; further output dropped]\n")
+			_, _ = io.WriteString(c.w, "\n"+TruncationMarker+"\n")
 		}
 		if err != nil {
 			return n, err

@@ -60,6 +60,38 @@ func writeSidecar(metaPath string, s *sidecar) error {
 	return nil
 }
 
+// LogInfo is the subset of a process's sidecar metadata the diagnostics
+// surface exposes — the run-id mapping for logs.search and the per-log
+// inventory for bottle.inspect. Times are parsed; an unset time is the
+// zero value.
+type LogInfo struct {
+	RunID     RunID
+	BottleID  string
+	StartedAt time.Time
+	Exited    bool
+	ExitedAt  time.Time
+	ExitCode  int
+}
+
+// ReadLogInfo loads the sidecar written next to logPath (<logPath>.json)
+// and returns its metadata. ok is false when the sidecar is absent or
+// unparseable — callers treat that as "unknown" rather than an error,
+// since a log file can exist without (or just before) its sidecar.
+func ReadLogInfo(logPath string) (LogInfo, bool) {
+	s, err := readSidecar(sidecarPathFor(logPath))
+	if err != nil {
+		return LogInfo{}, false
+	}
+	return LogInfo{
+		RunID:     s.ID,
+		BottleID:  s.BottleID,
+		StartedAt: parseTime(s.StartedAt),
+		Exited:    s.Exited,
+		ExitedAt:  parseTime(s.ExitedAt),
+		ExitCode:  s.ExitCode,
+	}, true
+}
+
 // readSidecar loads a sidecar by path.
 func readSidecar(metaPath string) (*sidecar, error) {
 	data, err := os.ReadFile(metaPath)

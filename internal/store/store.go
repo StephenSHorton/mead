@@ -114,6 +114,38 @@ func (s *Store) LogsDir(id string) (string, error) {
 	return logs, nil
 }
 
+// LogFiles returns the basenames of a bottle's process log files — the
+// *.log entries under its logs/ dir — sorted ascending. Because spawned
+// logs are named <unix_ns>-<seq>.log (see apps.uniqueLogName), lexical
+// order is chronological order. Sidecar files (*.log.json) and temp
+// files don't end in ".log" and so are excluded. A bottle with no logs
+// yet returns an empty slice + nil error (not an mkdir side-effect —
+// this is a pure read, unlike LogsDir). Validates the id.
+func (s *Store) LogFiles(id string) ([]string, error) {
+	dir, err := s.BottleDir(id)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "logs"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read logs dir: %w", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), ".log") {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // SaveBottle atomically writes a bottle's metadata. Creates the
 // bottle's directory if it doesn't exist. Validates b.ID before
 // touching disk.
