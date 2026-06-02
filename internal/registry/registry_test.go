@@ -39,6 +39,11 @@ case "$1" in
           *) printf '\r\n%s\r\n    Greeting    REG_SZ    hello\r\n\r\n' "$key"; exit 0 ;;
         esac ;;
       add) printf 'reg: The operation completed successfully\r\n'; exit 0 ;;
+      delete)
+        case "$key" in
+          *Missing*) printf 'reg: Unable to find the specified registry key\r\n'; exit 1 ;;
+          *) printf 'The operation completed successfully.\r\n'; exit 0 ;;
+        esac ;;
       *) echo "unknown reg sub: $sub" >&2; exit 2 ;;
     esac ;;
   *) echo "unknown cmd: $1" >&2; exit 2 ;;
@@ -206,6 +211,49 @@ func TestSet_InvalidType(t *testing.T) {
 func TestSet_EmptyKey(t *testing.T) {
 	m, id, _ := newTestManager(t)
 	if err := m.Set(context.Background(), id, "", "Foo", "REG_SZ", "x"); !errors.Is(err, ErrRegistryKeyRequired) {
+		t.Fatalf("err = %v, want ErrRegistryKeyRequired", err)
+	}
+}
+
+func TestDelete_BuildsArgv(t *testing.T) {
+	m, id, argLog := newTestManager(t)
+	if err := m.Delete(context.Background(), id, `HKCU\Software\MeadTest`, "Greeting"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	got := readLog(t, argLog)
+	for _, want := range []string{"reg delete", "/v Greeting", "/f"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("argv %q missing %q", got, want)
+		}
+	}
+}
+
+func TestDelete_KeyOnlyOmitsValueFlag(t *testing.T) {
+	m, id, argLog := newTestManager(t)
+	if err := m.Delete(context.Background(), id, `HKCU\Software\MeadTest`, ""); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	got := readLog(t, argLog)
+	if !strings.Contains(got, "/f") {
+		t.Errorf("argv = %q, want /f", got)
+	}
+	if strings.Contains(got, "/v") {
+		t.Errorf("argv = %q, key-only Delete must not pass /v", got)
+	}
+}
+
+func TestDelete_NotFoundIsIdempotent(t *testing.T) {
+	m, id, _ := newTestManager(t)
+	// Deleting something already gone must succeed (nil) — undo relies on
+	// this to be a safe "make sure it's gone" inverse.
+	if err := m.Delete(context.Background(), id, `HKCU\Software\Missing`, "x"); err != nil {
+		t.Errorf("Delete of missing key should be nil, got %v", err)
+	}
+}
+
+func TestDelete_EmptyKey(t *testing.T) {
+	m, id, _ := newTestManager(t)
+	if err := m.Delete(context.Background(), id, "  ", "x"); !errors.Is(err, ErrRegistryKeyRequired) {
 		t.Fatalf("err = %v, want ErrRegistryKeyRequired", err)
 	}
 }

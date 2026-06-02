@@ -363,6 +363,18 @@ type bottlesInspectResult struct {
 	// include_disk was set. On APFS this OVERSTATES disk use for cloned
 	// bottles (clonefile sharing isn't reflected in a size walk).
 	DiskBytes *int64 `json:"disk_bytes"`
+	// History summarizes this bottle's reversible mutations in the undo/redo
+	// journal. null when the journal is unavailable (degraded startup).
+	History *bottleHistoryInfo `json:"history"`
+}
+
+type bottleHistoryInfo struct {
+	UndoDepth int    `json:"undo_depth"`
+	RedoDepth int    `json:"redo_depth"`
+	// LastOp is the most recent op for this bottle still on the undo stack
+	// ("" if none — including when all of the bottle's ops are currently
+	// undone and sitting on the redo stack).
+	LastOp string `json:"last_op,omitempty"`
 }
 
 func (c *Core) handleBottlesInspect(raw json.RawMessage) (any, error) {
@@ -451,6 +463,11 @@ func (c *Core) handleBottlesInspect(raw json.RawMessage) (any, error) {
 			return nil, err
 		}
 		out.DiskBytes = &size
+	}
+
+	if c.History != nil {
+		ud, rd, last := c.History.BottleSummary(p.ID)
+		out.History = &bottleHistoryInfo{UndoDepth: ud, RedoDepth: rd, LastOp: last}
 	}
 
 	return out, nil

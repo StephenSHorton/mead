@@ -59,6 +59,11 @@ func RegisterAll(b *bridge.Bridge, c *Core) {
 	reg("logs.tail", c.handleLogsTail)
 	reg("logs.search", c.handleLogsSearch)
 	reg("bottles.inspect", c.handleBottlesInspect)
+
+	// --- History (undo/redo of reversible prefix mutations) --------------
+	reg("history.undo", c.handleHistoryUndo)
+	reg("history.redo", c.handleHistoryRedo)
+	reg("history.list", c.handleHistoryList)
 }
 
 // pingResult is the response shape for bridge.ping — kept stable across
@@ -155,6 +160,9 @@ func (c *Core) handleBottlesCreate(raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Undoable: history.undo deletes the new bottle. Terminal — recreating
+	// would mint a different id, so a create can't be redone.
+	c.recordBottleLifecycle("bottles.create", b.ID, b.Name)
 	return toSummary(b), nil
 }
 
@@ -183,6 +191,9 @@ func (c *Core) handleBottlesClone(raw json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Undoable: history.undo deletes the clone (the source is untouched).
+	// Terminal, like create.
+	c.recordBottleLifecycle("bottles.clone", b.ID, b.Name)
 	return toSummary(b), nil
 }
 

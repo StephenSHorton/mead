@@ -149,6 +149,41 @@ func (m *Manager) Set(ctx context.Context, bottleID, key, valueName, regType, da
 	return nil
 }
 
+// Delete removes a registry value (when valueName is non-empty) or the
+// whole key (when valueName is empty) from the bottle's prefix via
+// `wine reg delete … /f`. /f forces no-prompt, matching Set. It is the
+// inverse history.undo applies for a registry.set that CREATED a value or
+// key, so it is idempotent: deleting something already gone (exit 1 + the
+// not-found marker `reg` prints) returns nil, mirroring store.DeleteBottle's
+// "make sure this is gone" semantics.
+//
+// Synchronous (runner.Run). Deleting a key removes its whole subtree —
+// history undo only does this for a key it confirmed it created, so
+// there's nothing of the user's underneath to lose.
+func (m *Manager) Delete(ctx context.Context, bottleID, key, valueName string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ErrRegistryKeyRequired
+	}
+	args := []string{"reg", "delete", key}
+	if v := strings.TrimSpace(valueName); v != "" {
+		args = append(args, "/v", v)
+	}
+	args = append(args, "/f")
+
+	res, err := m.runWine(ctx, bottleID, args)
+	if err != nil {
+		if res == nil {
+			return err
+		}
+		if res.ExitCode == 1 && strings.Contains(string(res.Output), regNotFoundMarker) {
+			return nil // already absent — idempotent
+		}
+		return fmt.Errorf("%w: reg delete exited %d\noutput:\n%s", ErrRegistryWriteFailed, res.ExitCode, truncate(res.Output, 4096))
+	}
+	return nil
+}
+
 // runWine composes the bottle's Wine environment — the GPTK preamble,
 // then the bottle's persisted env overrides, then WINEPREFIX last, the
 // identical layering apps.specForBottle uses — and runs `wine <args…>`
