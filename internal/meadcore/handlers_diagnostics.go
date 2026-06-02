@@ -20,7 +20,7 @@ import (
 // bottle's accumulated logs and current state — distinct from the
 // process.* surface, which is keyed by a single live/recent RunID.
 // logs.tail / logs.search aggregate across a bottle's whole run history;
-// bottle.inspect is a one-shot snapshot of everything Mead knows about a
+// bottles.inspect is a one-shot snapshot of everything Mead knows about a
 // bottle. All three are pure reads — no prefix is mutated.
 
 // --- logs.tail ---------------------------------------------------------
@@ -320,9 +320,9 @@ func searchFile(path string, match func(string) bool, runID, file string, limit 
 	}
 }
 
-// --- bottle.inspect ----------------------------------------------------
+// --- bottles.inspect ---------------------------------------------------
 
-type bottleInspectParams struct {
+type bottlesInspectParams struct {
 	ID string `json:"id"`
 	// IncludeDisk adds the (expensive) recursive prefix size walk.
 	IncludeDisk bool `json:"include_disk"`
@@ -337,11 +337,11 @@ type logFileInfo struct {
 	// ExitCode is meaningful only when Exited is true; for a still-running
 	// or not-yet-recorded log it serializes as 0 and should be ignored.
 	// (No omitempty, unlike processSummary, so a clean exit_code:0 stays
-	// visible — bottle.inspect is meant to be a definitive snapshot.)
+	// visible — bottles.inspect is meant to be a definitive snapshot.)
 	ExitCode int `json:"exit_code"`
 }
 
-type bottleInspectResult struct {
+type bottlesInspectResult struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	CreatedAt   string `json:"created_at,omitempty"`
@@ -365,11 +365,11 @@ type bottleInspectResult struct {
 	DiskBytes *int64 `json:"disk_bytes"`
 }
 
-func (c *Core) handleBottleInspect(raw json.RawMessage) (any, error) {
+func (c *Core) handleBottlesInspect(raw json.RawMessage) (any, error) {
 	if err := c.requireBottles(); err != nil {
 		return nil, err
 	}
-	var p bottleInspectParams
+	var p bottlesInspectParams
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
@@ -398,7 +398,7 @@ func (c *Core) handleBottleInspect(raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 
-	out := bottleInspectResult{
+	out := bottlesInspectResult{
 		ID:           b.ID,
 		Name:         b.Name,
 		WineVersion:  b.WineVersion,
@@ -414,7 +414,7 @@ func (c *Core) handleBottleInspect(raw json.RawMessage) (any, error) {
 	if !b.CreatedAt.IsZero() {
 		// Match the bottles.* surface's created_at shape (toSummary in
 		// handlers.go) so the same field reads identically across
-		// bottles.get and bottle.inspect. CreatedAt is stored UTC.
+		// bottles.get and bottles.inspect. CreatedAt is stored UTC.
 		out.CreatedAt = b.CreatedAt.Format("2006-01-02T15:04:05Z")
 	}
 

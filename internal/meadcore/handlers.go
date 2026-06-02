@@ -58,7 +58,7 @@ func RegisterAll(b *bridge.Bridge, c *Core) {
 	// --- Diagnostics (read-only visibility) ------------------------------
 	reg("logs.tail", c.handleLogsTail)
 	reg("logs.search", c.handleLogsSearch)
-	reg("bottle.inspect", c.handleBottleInspect)
+	reg("bottles.inspect", c.handleBottlesInspect)
 }
 
 // pingResult is the response shape for bridge.ping — kept stable across

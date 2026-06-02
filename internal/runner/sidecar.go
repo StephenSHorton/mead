@@ -62,7 +62,7 @@ func writeSidecar(metaPath string, s *sidecar) error {
 
 // LogInfo is the subset of a process's sidecar metadata the diagnostics
 // surface exposes — the run-id mapping for logs.search and the per-log
-// inventory for bottle.inspect. Times are parsed; an unset time is the
+// inventory for bottles.inspect. Times are parsed; an unset time is the
 // zero value.
 type LogInfo struct {
 	RunID     RunID

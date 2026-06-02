@@ -82,7 +82,7 @@ Single registration point: `meadcore.RegisterAll`. Naming convention: `<noun>.<v
 | Apps | ✓ `apps.install`, ✓ `apps.launch`, ✓ `apps.uninstall`, ◯ `apps.list` (returns [] — auto-discovery is v0.3) |
 | Processes | ✓ `process.list`, ✓ `process.get`, ✓ `process.kill`, ✓ `process.logs` (offset-based polling) |
 | Prefix tweaks | ✓ `env.set`, ✓ `env.get`, ✓ `dll.override`, ✓ `winetricks.run`, ✓ `registry.get`, ✓ `registry.set` |
-| Diagnostics | ✓ `logs.tail`, ✓ `logs.search` (bottle-keyed, across run history; distinct from `process.logs`' single-RunID byte polling), ✓ `bottle.inspect` (one-shot snapshot: metadata, env/dll overrides, log inventory, live processes, optional `include_disk` size walk) |
+| Diagnostics | ✓ `logs.tail`, ✓ `logs.search` (bottle-keyed, across run history; distinct from `process.logs`' single-RunID byte polling), ✓ `bottles.inspect` (one-shot snapshot: metadata, env/dll overrides, log inventory, live processes, optional `include_disk` size walk) |
 
 Planned (land as the underlying packages get bodies):
 

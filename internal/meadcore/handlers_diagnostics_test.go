@@ -100,8 +100,8 @@ func TestLogsSearchParams_Decode(t *testing.T) {
 	}
 }
 
-func TestBottleInspectParams_Decode(t *testing.T) {
-	var p bottleInspectParams
+func TestBottlesInspectParams_Decode(t *testing.T) {
+	var p bottlesInspectParams
 	if err := json.Unmarshal([]byte(`{"id":"b1","include_disk":true}`), &p); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -297,9 +297,9 @@ func TestLogsSearch_NoLogs(t *testing.T) {
 	}
 }
 
-// --- bottle.inspect ----------------------------------------------------
+// --- bottles.inspect ---------------------------------------------------
 
-func TestBottleInspect_Basic(t *testing.T) {
+func TestBottlesInspect_Basic(t *testing.T) {
 	c, s := newDiagCore(t)
 	seedBottle(t, s, &store.Bottle{
 		ID:          diagBottleID,
@@ -322,7 +322,7 @@ func TestBottleInspect_Basic(t *testing.T) {
 	lp := writeLog(t, s, diagBottleID, "1-1.log", "hello\n")
 	writeSidecar(t, lp, "run-xyz", 0)
 
-	out := callJSON(t, c.handleBottleInspect, bottleInspectParams{ID: diagBottleID}).(bottleInspectResult)
+	out := callJSON(t, c.handleBottlesInspect, bottlesInspectParams{ID: diagBottleID}).(bottlesInspectResult)
 	if out.ID != diagBottleID || out.Name != "Diablo II" || out.WineVersion != "wine-11.0" {
 		t.Errorf("scalar fields wrong: %+v", out)
 	}
@@ -361,15 +361,15 @@ func TestBottleInspect_Basic(t *testing.T) {
 	}
 }
 
-func TestBottleInspect_NotFound(t *testing.T) {
+func TestBottlesInspect_NotFound(t *testing.T) {
 	c, _ := newDiagCore(t)
-	raw, _ := json.Marshal(bottleInspectParams{ID: "88888888-8888-8888-8888-888888888888"})
-	if _, err := c.handleBottleInspect(raw); !errors.Is(err, bottles.ErrBottleNotFound) {
+	raw, _ := json.Marshal(bottlesInspectParams{ID: "88888888-8888-8888-8888-888888888888"})
+	if _, err := c.handleBottlesInspect(raw); !errors.Is(err, bottles.ErrBottleNotFound) {
 		t.Errorf("expected ErrBottleNotFound, got %v", err)
 	}
 }
 
-func TestBottleInspect_IncludeDisk(t *testing.T) {
+func TestBottlesInspect_IncludeDisk(t *testing.T) {
 	c, s := newDiagCore(t)
 	seedBottle(t, s, &store.Bottle{ID: diagBottleID, Name: "b", CreatedAt: time.Now().UTC()})
 	prefix, _ := s.PrefixDir(diagBottleID)
@@ -379,7 +379,7 @@ func TestBottleInspect_IncludeDisk(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(prefix, "drive_c", "a.bin"), make([]byte, 1234), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	out := callJSON(t, c.handleBottleInspect, bottleInspectParams{ID: diagBottleID, IncludeDisk: true}).(bottleInspectResult)
+	out := callJSON(t, c.handleBottlesInspect, bottlesInspectParams{ID: diagBottleID, IncludeDisk: true}).(bottlesInspectResult)
 	if out.DiskBytes == nil {
 		t.Fatal("DiskBytes should be set with include_disk")
 	}
@@ -388,10 +388,10 @@ func TestBottleInspect_IncludeDisk(t *testing.T) {
 	}
 }
 
-func TestBottleInspect_EnvNeverNull(t *testing.T) {
+func TestBottlesInspect_EnvNeverNull(t *testing.T) {
 	c, s := newDiagCore(t)
 	seedBottle(t, s, &store.Bottle{ID: diagBottleID, Name: "b", CreatedAt: time.Now().UTC()})
-	out := callJSON(t, c.handleBottleInspect, bottleInspectParams{ID: diagBottleID}).(bottleInspectResult)
+	out := callJSON(t, c.handleBottlesInspect, bottlesInspectParams{ID: diagBottleID}).(bottlesInspectResult)
 	if out.EnvOverrides == nil || out.DLLOverrides == nil {
 		t.Error("env/dll override maps must never be null")
 	}
