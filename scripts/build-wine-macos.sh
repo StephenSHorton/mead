@@ -738,14 +738,19 @@ verify() {
   # working prefix shows these exact Apple DLLs (every one carries a
   # 'D3DMetalDLLsBase' build-path string); a plain wined3d build would not.
   local win64="$OUT_DIR/lib/wine/x86_64-windows"
-  for d in d3d11 d3d12 dxgi; do
+  # When DXMT_MENU_FIX=1, install_dxmt_route_c has replaced d3d11/dxgi with DXMT
+  # (verified separately in 7e); only d3d12 stays Apple D3DMetal. Otherwise all
+  # three must be D3DMetal.
+  local d3dmetal_dlls="d3d11 d3d12 dxgi"
+  [[ "$DXMT_MENU_FIX" == "1" ]] && d3dmetal_dlls="d3d12"
+  for d in $d3dmetal_dlls; do
     if grep -qa 'D3DMetalDLLsBase' "$win64/$d.dll" 2>/dev/null; then
       ok "$d.dll is Apple D3DMetal (overlay landed)"
     else
       die "$d.dll is NOT Apple D3DMetal — the GPTK overlay did not apply; would render via plain wined3d (no Metal)"
     fi
   done
-  for d in d3d11 d3d12 dxgi; do
+  for d in $d3dmetal_dlls; do
     local tgt; tgt="$(readlink "$unix64/$d.so" 2>/dev/null || echo '')"
     [[ "$tgt" == *libd3dshared.dylib ]] \
       || warn "$d.so does not symlink to libd3dshared.dylib (got '$tgt')"
