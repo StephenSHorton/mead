@@ -1,0 +1,190 @@
+diff --git a/src/d3d11/d3d11_resource.hpp b/src/d3d11/d3d11_resource.hpp
+index 80927e5..0fb601a 100644
+--- a/src/d3d11/d3d11_resource.hpp
++++ b/src/d3d11/d3d11_resource.hpp
+@@ -128,6 +128,8 @@ struct D3D11ResourceCommon : ID3D11Resource {
+   virtual HRESULT GetSharedHandle(HANDLE *pSharedHandle) = 0;
+   virtual HRESULT
+   CreateSharedHandle(const SECURITY_ATTRIBUTES *Attributes, DWORD Access, const WCHAR *pName, HANDLE *pNTHandle) = 0;
++  // Keyed-mutex sub-object for MISC_SHARED_KEYEDMUTEX textures (CEF cross-process shared texture); null otherwise.
++  virtual IDXGIKeyedMutex *GetKeyedMutex() { return nullptr; }
+ 
+   virtual Rc<StagingResource> staging(UINT Subresource) = 0;
+   virtual Rc<DynamicBuffer> dynamicBuffer(UINT *pBufferLength, UINT *pBindFlags) = 0;
+@@ -238,6 +240,15 @@ public:
+       return S_OK;
+     }
+ 
++    if (riid == __uuidof(IDXGIKeyedMutex)) {
++      if (auto *km = this->GetKeyedMutex()) {
++        km->AddRef();
++        *ppvObject = km;
++        return S_OK;
++      }
++      return E_NOINTERFACE;
++    }
++
+     if (logQueryInterfaceError(__uuidof(typename tag::COM), riid)) {
+       WARN("D3D11Resource(", tag::debug_name ,"): Unknown interface query ", str::format(riid));
+     }
+diff --git a/src/d3d11/d3d11_texture_device.cpp b/src/d3d11/d3d11_texture_device.cpp
+index 55ee999..e592e79 100644
+--- a/src/d3d11/d3d11_texture_device.cpp
++++ b/src/d3d11/d3d11_texture_device.cpp
+@@ -10,6 +10,29 @@
+ 
+ namespace dxmt {
+ 
++// No-op IDXGIKeyedMutex for cross-process shared textures. CEF accelerated-OSR requires the texture
++// to expose IDXGIKeyedMutex and AcquireSync/ReleaseSync to succeed; for the single producer/consumer
++// WC3 menu overlay a no-op satisfies the contract (no tearing for a mostly-static menu). Validated
++// offline (tf.exe) before any real MTLSharedEvent-backed sync work. Aggregated into the owning
++// resource — all IUnknown/refcount/private-data calls delegate to it (mirrors MTLDXGIResource).
++template <typename TResource>
++class MTLDXGIKeyedMutex final : public IDXGIKeyedMutex {
++public:
++  MTLDXGIKeyedMutex(TResource *resource) : resource_(resource) {}
++  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppv) final { return resource_->QueryInterface(riid, ppv); }
++  ULONG STDMETHODCALLTYPE AddRef() final { return resource_->AddRef(); }
++  ULONG STDMETHODCALLTYPE Release() final { return resource_->Release(); }
++  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID g, UINT s, const void *d) final { return resource_->SetPrivateData(g, s, d); }
++  HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID g, const IUnknown *o) final { return resource_->SetPrivateDataInterface(g, o); }
++  HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID g, UINT *s, void *d) final { return resource_->GetPrivateData(g, s, d); }
++  HRESULT STDMETHODCALLTYPE GetParent(REFIID riid, void **pp) final { return resource_->GetDeviceInterface(riid, pp); }
++  HRESULT STDMETHODCALLTYPE GetDevice(REFIID riid, void **pp) final { return resource_->GetDeviceInterface(riid, pp); }
++  HRESULT STDMETHODCALLTYPE AcquireSync(UINT64, DWORD) final { return S_OK; }
++  HRESULT STDMETHODCALLTYPE ReleaseSync(UINT64) final { return S_OK; }
++private:
++  TResource *resource_;
++};
++
+ #pragma region DeviceTexture
+ 
+ template <typename tag_texture>
+@@ -19,6 +42,7 @@ private:
+   float min_lod = 0.0;
+   D3DKMT_HANDLE local_kmt_ = 0;
+   D3DKMT_HANDLE global_kmt_ = 0;
++  std::unique_ptr<IDXGIKeyedMutex> keyed_mutex_{};
+ 
+   using SRVBase =
+       TResourceViewBase<tag_shader_resource_view<DeviceTexture<tag_texture>>>;
+@@ -309,6 +333,12 @@ public:
+     return S_OK;
+   }
+ 
++  IDXGIKeyedMutex *GetKeyedMutex() override { return keyed_mutex_.get(); }
++  void EnableKeyedMutex() {
++    if (!keyed_mutex_)
++      keyed_mutex_ = std::make_unique<MTLDXGIKeyedMutex<DeviceTexture>>(this);
++  }
++
+   void SetMinLOD(float MinLod) override { min_lod = MinLod; }
+ 
+   float GetMinLOD() override { return min_lod; }
+@@ -411,13 +441,12 @@ HRESULT CreateDeviceTextureInternal(MTLD3D11Device *pDevice,
+       return E_FAIL;
+     }
+ 
+-    // TODO: handle keyed mutex
+-
+     initialize(std::move(allocation));
+-    *ppTexture = reinterpret_cast<typename tag::COM_IMPL *>(
+-        ref(new DeviceTexture<tag>(&finalDesc, std::move(texture), create.hResource,
+-                                   create.hGlobalShare, pDevice))
+-    );
++    auto *device_texture = new DeviceTexture<tag>(&finalDesc, std::move(texture), create.hResource,
++                                                  create.hGlobalShare, pDevice);
++    if (finalDesc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX)
++      device_texture->EnableKeyedMutex();
++    *ppTexture = reinterpret_cast<typename tag::COM_IMPL *>(ref(device_texture));
+     return S_OK;
+   }
+ 
+@@ -485,6 +514,8 @@ ImportSharedTextureInternal(
+   texture->rename(std::move(allocation));
+ 
+   Com<DeviceTexture<tag>> device_texture = (ref(new DeviceTexture<tag>(&finalDesc, std::move(texture), pDevice)));
++  if (finalDesc.MiscFlags & D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX)
++    device_texture->EnableKeyedMutex();
+   return device_texture->QueryInterface(riid, ppTexture);
+ }
+ 
+diff --git a/src/dxgi/dxgi_adapter.cpp b/src/dxgi/dxgi_adapter.cpp
+index 1b3d37c..110fe1e 100644
+--- a/src/dxgi/dxgi_adapter.cpp
++++ b/src/dxgi/dxgi_adapter.cpp
+@@ -14,8 +14,16 @@ namespace dxmt {
+ Com<IDXGIOutput> CreateOutput(IMTLDXGIAdapter *pAadapter, HMONITOR monitor, DxgiOptions &options);
+ 
+ LUID GetAdapterLuid(WMT::Device device) {
+-    // NOTE: use big-endian registryID, be consistent with MVK
+-  return std::bit_cast<LUID>(__builtin_bswap64(device.registryID()));
++  // Return a small, Windows-like adapter LUID: {LowPart = low 32 bits of registryID, HighPart = 0}.
++  // Native Windows GPU LUIDs are small (HighPart = 0). Some D3D11 clients serialize the adapter LUID
++  // through a narrow integer and silently fail to match a large value — notably CEF/Chromium's
++  // cross-process accelerated shared-texture path (Battle.net's BlizzardBrowser, which composites the
++  // WC3 Reforged in-game menu): it passes the adapter LUID as a decimal command-line switch and could
++  // not match the previous big-endian registryID (huge HighPart), so the shared-texture factory failed
++  // to find the adapter. registryID is stable per-GPU within a boot, so a small LUID stays consistent
++  // across the producer/consumer processes. NOTE: this no longer equals MoltenVK's Vulkan device LUID
++  // (bswap64(registryID)); fine for the D3D-only path, revisit if D3D<->Vulkan LUID interop is needed.
++  return std::bit_cast<LUID>(static_cast<uint64_t>(static_cast<uint32_t>(device.registryID())));
+ }
+ 
+ class MTLDXGIAdapter : public MTLDXGIObject<IMTLDXGIAdapter> {
+diff --git a/src/dxgi/dxgi_factory.cpp b/src/dxgi/dxgi_factory.cpp
+index 0b3fa09..f1d042f 100644
+--- a/src/dxgi/dxgi_factory.cpp
++++ b/src/dxgi/dxgi_factory.cpp
+@@ -206,8 +206,22 @@ public:
+ 
+   HRESULT STDMETHODCALLTYPE GetSharedResourceAdapterLuid(HANDLE hResource,
+                                                          LUID *pLuid) final {
+-    ERR("Not implemented");
+-    return E_NOTIMPL;
++    // Single Metal GPU: the shared resource belongs to the sole adapter. Return that
++    // adapter's real LUID (same value DXMT advertises via GetDesc1) instead of the old
++    // E_NOTIMPL stub, which left the caller's LUID uninitialized -> BlizzardBrowser's
++    // shared-texture factory then searched for a garbage LUID and failed. (WC3 menu fix.)
++    if (!pLuid)
++      return E_INVALIDARG;
++    IDXGIAdapter1 *handle = nullptr;
++    if (this->EnumAdapters1(0, &handle) != S_OK || !handle)
++      return DXGI_ERROR_NOT_FOUND;
++    DXGI_ADAPTER_DESC1 desc;
++    HRESULT hr = handle->GetDesc1(&desc);
++    handle->Release();
++    if (FAILED(hr))
++      return hr;
++    *pLuid = desc.AdapterLuid;
++    return S_OK;
+   }
+ 
+   HRESULT STDMETHODCALLTYPE MakeWindowAssociation(HWND WindowHandle,
+@@ -258,7 +272,24 @@ public:
+ 
+   HRESULT STDMETHODCALLTYPE EnumAdapterByLuid(LUID luid, REFIID iid,
+                                               void **adapter) override {
+-    ERR("DXGIFactory::EnumAdapterByLuid: not implemented");
++    // DXMT adapter LUIDs are stable per physical GPU across processes (see GetAdapterLuid), so a
++    // cross-process shared-texture consumer can locate the producer's adapter by LUID. Enumerate and
++    // match, reusing the tested EnumAdapters1 + GetDesc1 path. (Was a "not implemented" stub.)
++    InitReturnPtr(adapter);
++    IDXGIAdapter1 *handle = nullptr;
++    for (UINT i = 0; this->EnumAdapters1(i, &handle) == S_OK; i++) {
++      DXGI_ADAPTER_DESC1 desc;
++      if (SUCCEEDED(handle->GetDesc1(&desc)) &&
++          desc.AdapterLuid.LowPart == luid.LowPart &&
++          desc.AdapterLuid.HighPart == luid.HighPart) {
++        HRESULT hr = handle->QueryInterface(iid, adapter);
++        handle->Release();
++        return hr;
++      }
++      handle->Release();
++      handle = nullptr;
++    }
++    ERR("DXGIFactory::EnumAdapterByLuid: no adapter matches the requested LUID");
+     return DXGI_ERROR_NOT_FOUND;
+   }
+ 

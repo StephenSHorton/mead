@@ -34,8 +34,14 @@
 #        donor byte-for-byte. NOTE (verified against the working donor
 #        prefix): the 32-bit PE32 Battle.net CEF launcher actually renders
 #        via the CrossOver BUILTIN i386 d3d11 + the winemac Metal present
-#        hook — NOT via DXMT, and Mead has no mechanism to load DXMT today.
-#        So DXMT here is donor-parity, not the launcher's render path.
+#        hook — NOT via DXMT. So the lib/external DXMT is donor-parity, not the
+#        launcher's render path. (The in-GAME render path IS DXMT — see below.)
+#     4. DXMT_MENU_FIX (default on): build a PATCHED DXMT v0.80 from source and
+#        install it into the wine BUILTIN tree (lib/wine/x86_64-windows +
+#        x86_64-unix/winemetal.so) so 64-bit games actually LOAD DXMT for
+#        d3d11/dxgi/d3d10core. This is what paints the Warcraft III Reforged
+#        in-game menu (a cross-process D3D11 shared texture D3DMetal can't do).
+#        D3DMetal still serves d3d12; the i386 launcher tree is untouched.
 #
 #   Provenance of each overlaid piece (matches the donor exactly):
 #     - D3DMetal.framework + libd3dshared.dylib + 64-bit d3d DLLs
@@ -86,11 +92,34 @@ GPTK_DMG="${GPTK_DMG:-$HOME/Downloads/Game_Porting_Toolkit_3.0.dmg}"
 
 # DXMT + MoltenVK source. 'donor' = copy from D4Mac (default, ABI-safe).
 # 'upstream' = fetch 3Shain/dxmt v0.72 + KhronosGroup/MoltenVK releases.
+# NOTE: this only stages DXMT under lib/external (donor-parity) + MoltenVK + the
+# i386 tree. It does NOT make wine LOAD DXMT — that's DXMT_MENU_FIX below.
 DXMT_SOURCE="${DXMT_SOURCE:-donor}"
 D4MAC_WINE="${D4MAC_WINE:-/Applications/D4Mac.app/Contents/SharedSupport/Wine}"
 DXMT_VERSION="${DXMT_VERSION:-v0.72}"
 DXMT_UPSTREAM_URL="${DXMT_UPSTREAM_URL:-https://github.com/3Shain/dxmt/releases/download/${DXMT_VERSION}/dxmt-${DXMT_VERSION}.tar.gz}"
 MOLTENVK_UPSTREAM_URL="${MOLTENVK_UPSTREAM_URL:-https://github.com/KhronosGroup/MoltenVK/releases/latest/download/MoltenVK-macos.tar}"
+
+# DXMT_MENU_FIX: build a PATCHED DXMT v0.80 from source and install it into the
+# wine BUILTIN tree (lib/wine/x86_64-windows + x86_64-unix/winemetal.so) so wine
+# actually LOADS DXMT for 64-bit d3d11/dxgi/d3d10core. The unmodified build only
+# stages DXMT inertly under lib/external. Loading DXMT is what paints the Warcraft
+# III Reforged in-game menu: BlizzardBrowser composites it via a cross-process
+# D3D11 shared texture that Apple D3DMetal cannot provide. The patch
+# (scripts/dxmt/wc3-menu.patch) is:
+#   - a small Windows-like adapter LUID (BlizzardBrowser's --gpuluid parse overflowed
+#     DXMT's huge bswap(registryID) LUID -> "Failed to find the GPU adapter"); and
+#   - a no-op IDXGIKeyedMutex (CEF's accelerated shared texture requires the interface).
+# EFFECT: switches the 64-bit d3d11/d3d10/dxgi backend from Apple D3DMetal to DXMT
+# (D3DMetal still serves d3d12). The 32-bit launcher (i386 wined3d) is untouched.
+# Set DXMT_MENU_FIX=0 to keep the stock all-D3DMetal backend (no in-game CEF menu).
+DXMT_MENU_FIX="${DXMT_MENU_FIX:-1}"
+DXMT_MENU_REPO="${DXMT_MENU_REPO:-https://github.com/3Shain/dxmt.git}"
+DXMT_MENU_VERSION="${DXMT_MENU_VERSION:-v0.80}"   # MIT release the patch is based on
+# Optional caches to skip the slow LLVM build / reuse an existing wine build dir.
+DXMT_LLVM_PATH="${DXMT_LLVM_PATH:-}"
+DXMT_WINE_BUILD="${DXMT_WINE_BUILD:-}"
+DXMT_BUILD_DIR=""   # set by build_dxmt(), consumed by install_dxmt_route_c()
 
 # Work + output dirs.
 WORK_DIR="${WORK_DIR:-$SCRIPT_DIR/.wine-build}"
@@ -508,6 +537,112 @@ overlay_dxmt_and_moltenvk() {
 }
 
 # ----------------------------------------------------------------------------
+# Phase 5b: build PATCHED DXMT v0.80 from source (the WC3 in-game menu fix)
+#   Builds DXMT's d3d11/dxgi/d3d10core/winemetal for x86_64 from 3Shain/dxmt
+#   @ DXMT_MENU_VERSION + scripts/dxmt/wc3-menu.patch, against a static LLVM 15
+#   (cross-compiled) and the wine build dir cxbuilder just produced (winebuild +
+#   headers). Heavy the first time (~30 min for LLVM); both LLVM and the DXMT
+#   build cache, so reruns are fast. Skipped entirely when DXMT_MENU_FIX=0.
+# ----------------------------------------------------------------------------
+build_dxmt() {
+  [[ "$DXMT_MENU_FIX" == "1" ]] || { ok "DXMT_MENU_FIX=0 — skipping patched DXMT build (stock D3DMetal d3d11)"; return; }
+
+  local patch="$SCRIPT_DIR/dxmt/wc3-menu.patch"
+  local nativefile="$SCRIPT_DIR/dxmt/build-native-x86_64.txt"
+  [[ -f "$patch" ]]      || die "DXMT patch missing: $patch"
+  [[ -f "$nativefile" ]] || die "DXMT native file missing: $nativefile"
+  for t in meson ninja cmake git x86_64-w64-mingw32-gcc; do
+    command -v "$t" >/dev/null || die "DXMT_MENU_FIX=1 needs '$t' (brew install meson ninja cmake mingw-w64); or set DXMT_MENU_FIX=0"
+  done
+
+  local dxdir="$WORK_DIR/dxmt"
+  mkdir -p "$dxdir"
+
+  # 1. LLVM 15 (static, x86_64) — the long pole. DXMT links it statically, so a
+  #    brew dylib won't do; build from source. Cache-aware (skip if present).
+  local llvm="${DXMT_LLVM_PATH:-$dxdir/toolchains/llvm}"
+  if [[ -d "$llvm/lib" && -e "$llvm/bin/llvm-config" ]]; then
+    ok "LLVM 15 toolchain present at $llvm (cached)"
+  else
+    log "building LLVM 15.0.7 static x86_64 (~30 min, cached after first run)"
+    [[ -d "$dxdir/llvm-project/.git" ]] || \
+      git clone --depth 1 --branch llvmorg-15.0.7 https://github.com/llvm/llvm-project.git "$dxdir/llvm-project" \
+        || die "LLVM clone failed"
+    cmake -G Ninja -B "$dxdir/llvm-build" -S "$dxdir/llvm-project/llvm" \
+      -DCMAKE_INSTALL_PREFIX="$llvm" -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+      -DLLVM_HOST_TRIPLE=x86_64-apple-darwin -DLLVM_ENABLE_ASSERTIONS=On \
+      -DLLVM_ENABLE_ZSTD=Off -DCMAKE_BUILD_TYPE=Release \
+      -DLLVM_TARGETS_TO_BUILD="" -DLLVM_BUILD_TOOLS=Off \
+      || die "LLVM cmake configure failed"
+    cmake --build "$dxdir/llvm-build"  || die "LLVM build failed"
+    cmake --install "$dxdir/llvm-build" || die "LLVM install failed"
+    ok "LLVM 15 built + installed to $llvm"
+  fi
+
+  # 2. DXMT source @ the patch base, with the WC3-menu patch applied (idempotent:
+  #    reset tracked files first, then apply).
+  local src="$dxdir/dxmt-src"
+  if [[ ! -d "$src/.git" ]]; then
+    log "cloning DXMT ($DXMT_MENU_VERSION)"
+    git clone "$DXMT_MENU_REPO" "$src" || die "DXMT clone failed"
+  fi
+  git -C "$src" fetch --tags --depth 1 origin "$DXMT_MENU_VERSION" 2>/dev/null || git -C "$src" fetch --tags origin
+  git -C "$src" checkout -q "$DXMT_MENU_VERSION" || die "DXMT checkout $DXMT_MENU_VERSION failed"
+  git -C "$src" submodule update --init --recursive || die "DXMT submodule init failed"
+  git -C "$src" checkout -q -- .   # drop any previous patch hunks
+  git -C "$src" apply "$patch" || die "failed to apply $patch onto DXMT $DXMT_MENU_VERSION"
+  cp -p "$nativefile" "$src/build-native-x86_64.txt"
+  ok "DXMT $DXMT_MENU_VERSION checked out + wc3-menu.patch applied"
+
+  # 3. locate the wine build dir (winebuild marks it) from the cxbuilder build.
+  local winebuild
+  winebuild="${DXMT_WINE_BUILD:-$(/usr/bin/find "$WORK_DIR" -type f -name winebuild -path '*tools/winebuild*' 2>/dev/null | head -1)}"
+  [[ -n "$winebuild" ]] || die "could not locate the wine build dir (winebuild) under $WORK_DIR — build wine first"
+  local wine_build_path
+  if [[ -d "$winebuild" ]]; then wine_build_path="$winebuild"            # caller passed the dir
+  else wine_build_path="$(cd "$(dirname "$winebuild")/../.." && pwd)"; fi # .../wine/build
+  log "DXMT wine_build_path: $wine_build_path"
+
+  # 4. meson cross-build (x86_64 windows DLLs + winemetal.so).
+  ( cd "$src" && rm -rf build && \
+    meson setup --cross-file build-win64.txt --native-file build-native-x86_64.txt \
+      -Dnative_llvm_path="$llvm" -Dwine_build_path="$wine_build_path" --buildtype release build \
+    && meson compile -C build ) \
+    || die "DXMT meson build failed"
+
+  for d in src/d3d11/d3d11.dll src/dxgi/dxgi.dll src/d3d10/d3d10core.dll \
+           src/winemetal/winemetal.dll src/winemetal/unix/winemetal.so; do
+    [[ -f "$src/build/$d" ]] || die "DXMT build produced no $d"
+  done
+  DXMT_BUILD_DIR="$src/build"
+  ok "patched DXMT built: $DXMT_BUILD_DIR"
+}
+
+# ----------------------------------------------------------------------------
+# Phase 5c: install patched DXMT into the wine builtin tree (Route C)
+#   DXMT's PEs are "Wine builtin"-signed, so wine loads them ONLY from
+#   lib/wine/<arch>-windows (+ winemetal.so in <arch>-unix), NOT the exe dir.
+#   Copying them there makes the 64-bit game + CEF menu load DXMT. The 32-bit
+#   tree (i386 wined3d, the Battle.net launcher) is deliberately left untouched.
+# ----------------------------------------------------------------------------
+install_dxmt_route_c() {
+  [[ "$DXMT_MENU_FIX" == "1" ]] || return
+  [[ -n "$DXMT_BUILD_DIR" && -d "$DXMT_BUILD_DIR" ]] || die "install_dxmt_route_c: DXMT not built (build_dxmt ran?)"
+  local win64="$OUT_DIR/lib/wine/x86_64-windows" unix64="$OUT_DIR/lib/wine/x86_64-unix"
+  [[ -d "$win64" && -d "$unix64" ]] || die "wine install tree missing ($win64) — build wine + overlay first"
+
+  log "installing patched DXMT into the wine builtin tree (Route C)"
+  cp -p "$DXMT_BUILD_DIR/src/d3d11/d3d11.dll"             "$win64/d3d11.dll"
+  cp -p "$DXMT_BUILD_DIR/src/dxgi/dxgi.dll"               "$win64/dxgi.dll"
+  cp -p "$DXMT_BUILD_DIR/src/d3d10/d3d10core.dll"         "$win64/d3d10core.dll"
+  cp -p "$DXMT_BUILD_DIR/src/winemetal/winemetal.dll"     "$win64/winemetal.dll"
+  cp -p "$DXMT_BUILD_DIR/src/winemetal/unix/winemetal.so" "$unix64/winemetal.so"
+  # winemetal.so is a Mach-O unixlib; any edit invalidates its adhoc sig -> re-sign.
+  codesign -f -s - "$unix64/winemetal.so" 2>/dev/null || warn "codesign winemetal.so failed (dlopen may be blocked)"
+  ok "patched DXMT installed (Route C): 64-bit d3d11/dxgi/d3d10core -> DXMT, i386 launcher untouched"
+}
+
+# ----------------------------------------------------------------------------
 # Phase 6: wine64 compat symlink + entitlements (Locator + Preamble)
 # ----------------------------------------------------------------------------
 finalize_loader() {
@@ -603,14 +738,19 @@ verify() {
   # working prefix shows these exact Apple DLLs (every one carries a
   # 'D3DMetalDLLsBase' build-path string); a plain wined3d build would not.
   local win64="$OUT_DIR/lib/wine/x86_64-windows"
-  for d in d3d11 d3d12 dxgi; do
+  # When DXMT_MENU_FIX=1, install_dxmt_route_c has replaced d3d11/dxgi with DXMT
+  # (verified separately in 7e); only d3d12 stays Apple D3DMetal. Otherwise all
+  # three must be D3DMetal.
+  local d3dmetal_dlls="d3d11 d3d12 dxgi"
+  [[ "$DXMT_MENU_FIX" == "1" ]] && d3dmetal_dlls="d3d12"
+  for d in $d3dmetal_dlls; do
     if grep -qa 'D3DMetalDLLsBase' "$win64/$d.dll" 2>/dev/null; then
       ok "$d.dll is Apple D3DMetal (overlay landed)"
     else
       die "$d.dll is NOT Apple D3DMetal — the GPTK overlay did not apply; would render via plain wined3d (no Metal)"
     fi
   done
-  for d in d3d11 d3d12 dxgi; do
+  for d in $d3dmetal_dlls; do
     local tgt; tgt="$(readlink "$unix64/$d.so" 2>/dev/null || echo '')"
     [[ "$tgt" == *libd3dshared.dylib ]] \
       || warn "$d.so does not symlink to libd3dshared.dylib (got '$tgt')"
@@ -658,6 +798,22 @@ verify() {
     warn "wineboot failed — inspect manually with WINEDEBUG=+loaddll"
   fi
 
+  # 7e. patched DXMT install (Route C) — winemetal.so in x86_64-unix is the marker
+  # the stock build never produces; dxgi.dll should be the multi-MB DXMT, not the
+  # small D3DMetal/wined3d one.
+  if [[ "$DXMT_MENU_FIX" == "1" ]]; then
+    if [[ -f "$OUT_DIR/lib/wine/x86_64-unix/winemetal.so" ]]; then
+      local dxgisz; dxgisz="$(stat -f%z "$OUT_DIR/lib/wine/x86_64-windows/dxgi.dll" 2>/dev/null || echo 0)"
+      if [[ "$dxgisz" -gt 5000000 ]]; then
+        ok "patched DXMT loaded in the builtin tree (winemetal.so + DXMT dxgi ${dxgisz}B) — WC3 menu fix active"
+      else
+        warn "winemetal.so present but dxgi.dll is only ${dxgisz}B — DXMT may not have installed (expected multi-MB)"
+      fi
+    else
+      warn "DXMT_MENU_FIX=1 but lib/wine/x86_64-unix/winemetal.so missing — Route C install did not run"
+    fi
+  fi
+
   ok "capability verification complete"
   cat <<EOF
 
@@ -665,6 +821,7 @@ verify() {
  BUILD READY: $OUT_DIR
    wine: $v   (Metal-backed, d3dmetal bridge present)
    lib/external: D3DMetal.framework + libd3dshared + libMoltenVK + dxmt/
+   d3d11/dxgi/d3d10core: $([[ "$DXMT_MENU_FIX" == "1" ]] && echo "PATCHED DXMT (WC3 menu fix)" || echo "stock D3DMetal")
 
  NEXT — USER RENDER CONFIRMATION (orchestrator is screen-blind):
    1. Point Mead at this build:
@@ -687,7 +844,9 @@ main() {
   apply_patches
   extract_gptk_redist
   build_wine
+  build_dxmt
   overlay
+  install_dxmt_route_c
   finalize_loader
   verify
 }
